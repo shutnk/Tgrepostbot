@@ -11,27 +11,21 @@ YOUR_NICKNAME = "@nurikadambol"  # Твой ник
 
 async def forward_message(update, context):
     if update.channel_post:
+        # Проверяем, что пост из нашего канала
         if update.channel_post.chat.username == SOURCE_CHANNEL.replace("@", ""):
             
-            # 1. Берём оригинальный текст или подпись к картинке/видео
+            # Получаем текст поста (или подпись к картинке) если есть
             original_text = update.channel_post.caption or update.channel_post.text or ""
             
-            # 2. Создаём новую подпись (твой ник внизу)
-            new_text = f"{original_text}\n\n✍️ {YOUR_NICKNAME}"
+            # Формируем подпись (твой ник внизу)
+            new_caption = f"{original_text}\n\n✍️ {YOUR_NICKNAME}"
             
-            # 3. Если пост содержит медиа (фото, видео, файл), копируем с новой подписью
-            if update.channel_post.caption is not None or update.channel_post.text is None:
-                await update.channel_post.copy(
-                    chat_id=TARGET_CHANNEL,
-                    caption=new_text
-                )
-            # 4. Если это просто текстовый пост, отправляем как текст
-            else:
-                await update.channel_post.copy(
-                    chat_id=TARGET_CHANNEL,
-                    caption=new_text
-                )
-            print("✅ Переслано с твоей подписью!")
+            # УНИВЕРСАЛЬНЫЙ МЕТОД: Копируем сообщение и ПРИНУДИТЕЛЬНО меняем caption
+            await update.channel_post.copy(
+                chat_id=TARGET_CHANNEL,
+                caption=new_caption
+            )
+            print(f"✅ Переслано с подписью: {YOUR_NICKNAME}")
 
 def start_fake_server():
     server = http.server.HTTPServer(('0.0.0.0', 10000), http.server.BaseHTTPRequestHandler)
@@ -41,5 +35,5 @@ threading.Thread(target=start_fake_server, daemon=True).start()
 
 app = Application.builder().token(BOT_TOKEN).build()
 app.add_handler(MessageHandler(filters.ChatType.CHANNEL, forward_message))
-print("🚀 Бот готов (добавляет подпись внизу)!")
+print("🚀 Бот готов! Подпись ставится принудительно.")
 app.run_polling(allowed_updates=['channel_post'])
