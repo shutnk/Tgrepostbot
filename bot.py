@@ -10,75 +10,63 @@ SOURCE_CHANNEL = "@trifferi098"
 TARGET_CHANNEL = "@trifferi097"
 NEW_AUTHOR = "@esen_baevich"
 
-# Хранилище для временных альбомов
-albums = {}
-
 async def forward_message(update, context):
-    global albums
     if update.channel_post:
         if update.channel_post.chat.username == SOURCE_CHANNEL.replace("@", ""):
             post = update.channel_post
             original_text = post.caption or post.text or ""
             new_caption = re.sub(r'@\w+', NEW_AUTHOR, original_text)
 
-            # Если это фото
-            if post.photo:
-                group_id = post.media_group_id
-                file_id = post.photo[-1].file_id
-
-                # Если это альбом
-                if group_id:
-                    if group_id not in albums:
-                        albums[group_id] = []
-                    albums[group_id].append(file_id)
-
-                    # Если это первое фото в альбоме, запускаем таймер
-                    if len(albums[group_id]) == 1:
-                        # ================== ВРЕМЯ ОЖИДАНИЯ (6 СЕКУНД) ==================
-                        await asyncio.sleep(6)  # Увеличили с 2.5 до 6 секунд
-                        
-                        media_group = []
-                        for fid in albums[group_id]:
-                            media_group.append(InputMediaPhoto(media=fid))
-                        
-                        await context.bot.send_media_group(
-                            chat_id=TARGET_CHANNEL,
-                            media=media_group,
-                            caption=new_caption
-                        )
-                        print(f"✅ ГРУППА ИЗ {len(albums[group_id])} ФОТО ОТПРАВЛЕНА! Подпись: {NEW_AUTHOR}")
-                        del albums[group_id]
-                else:
-                    # Одиночное фото
-                    await context.bot.send_photo(
+            try:
+                # ===== ГЛАВНОЕ ИЗМЕНЕНИЕ =====
+                # Если у сообщения есть media_group_id (это альбом)
+                if post.media_group_id:
+                    # Запрашиваем у Telegram все фотографии из этого альбома
+                    album_photos = await context.bot.get_media_group(
+                        chat_id=post.chat_id,
+                        message_id=post.message_id
+                    )
+                    
+                    # Собираем их в список для отправки
+                    media_group = []
+                    for msg in album_photos:
+                        if msg.photo:
+                            media_group.append(InputMediaPhoto(media=msg.photo[-1].file_id))
+                    
+                    # Отправляем целый альбом с новой подписью
+                    await context.bot.send_media_group(
                         chat_id=TARGET_CHANNEL,
-                        photo=file_id,
+                        media=media_group,
                         caption=new_caption
                     )
-                    print("✅ Одно фото переслано.")
+                    print(f"✅ Альбом из {len(media_group)} фото отправлен с подписью {NEW_AUTHOR}")
 
-            # Видео
-            elif post.video:
-                await context.bot.send_video(
-                    chat_id=TARGET_CHANNEL,
-                    video=post.video.file_id,
-                    caption=new_caption
-                )
-                print("✅ Видео переслано.")
+                # ===== Обычные посты =====
+                elif post.photo:
+                    await context.bot.send_photo(
+                        chat_id=TARGET_CHANNEL,
+                        photo=post.photo[-1].file_id,
+                        caption=new_caption
+                    )
+                elif post.video:
+                    await context.bot.send_video(
+                        chat_id=TARGET_CHANNEL,
+                        video=post.video.file_id,
+                        caption=new_caption
+                    )
+                elif post.text:
+                    new_text = re.sub(r'@\w+', NEW_AUTHOR, post.text)
+                    await context.bot.send_message(
+                        chat_id=TARGET_CHANNEL,
+                        text=new_text
+                    )
+                else:
+                    await post.copy(chat_id=TARGET_CHANNEL, caption=new_caption)
+                
+                print("✅ Пост обработан.")
             
-            # Текст
-            elif post.text:
-                new_text = re.sub(r'@\w+', NEW_AUTHOR, post.text)
-                await context.bot.send_message(
-                    chat_id=TARGET_CHANNEL,
-                    text=new_text
-                )
-                print("✅ Текст переслан.")
-            
-            # Остальные типы
-            else:
-                await post.copy(chat_id=TARGET_CHANNEL, caption=new_caption)
-                print("✅ Другое скопировано.")
+            except Exception as e:
+                print(f"❌ Ошибка: {e}")
 
 def start_fake_server():
     server = http.server.HTTPServer(('0.0.0.0', 10000), http.server.BaseHTTPRequestHandler)
@@ -88,5 +76,5 @@ threading.Thread(target=start_fake_server, daemon=True).start()
 
 app = Application.builder().token(BOT_TOKEN).build()
 app.add_handler(MessageHandler(filters.ChatType.CHANNEL, forward_message))
-print("🚀 Бот с УВЕЛИЧЕННЫМ ВРЕМЕНЕМ ОЖИДАНИЯ (6 сек) запущен!")
+print("🚀 Бот с ПРАВИЛЬНОЙ СБОРКОЙ АЛЬБОМОВ запущен!")
 app.run_polling(allowed_updates=['channel_post'])
