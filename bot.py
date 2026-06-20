@@ -13,8 +13,24 @@ async def forward_message(update, context):
     if update.channel_post:
         if update.channel_post.chat.username == SOURCE_CHANNEL.replace("@", ""):
             post = update.channel_post
+            
+            # Берём текст или подпись к картинке
             original_text = post.caption or post.text or ""
-            new_caption = f"{original_text}\n\n✍️ {YOUR_NICKNAME}"
+            
+            # 1. Разбиваем текст на строки
+            lines = original_text.split('\n')
+            
+            # 2. Удаляем строки, которые начинаются с "Автор:" (или "автор:")
+            cleaned_lines = [line for line in lines if not line.strip().lower().startswith("автор:")]
+            
+            # 3. Склеиваем обратно, если есть что склеивать
+            cleaned_text = '\n'.join(cleaned_lines).strip()
+            
+            # 4. Добавляем твоего автора внизу
+            if cleaned_text:
+                new_caption = f"{cleaned_text}\n\n✍️ {YOUR_NICKNAME}"
+            else:
+                new_caption = f"✍️ {YOUR_NICKNAME}"
 
             try:
                 # Если это картинка
@@ -38,12 +54,11 @@ async def forward_message(update, context):
                         text=new_caption
                     )
                 else:
-                    # Для других типов файлов (документы, аудио и т.д.)
                     await post.copy(chat_id=TARGET_CHANNEL, caption=new_caption)
                 
-                print(f"✅ Переслано с подписью: {YOUR_NICKNAME}")
+                print(f"✅ Переслано. Автор заменён на {YOUR_NICKNAME}")
             except Exception as e:
-                print(f"❌ Ошибка пересылки: {e}")
+                print(f"❌ Ошибка: {e}")
 
 def start_fake_server():
     server = http.server.HTTPServer(('0.0.0.0', 10000), http.server.BaseHTTPRequestHandler)
@@ -53,5 +68,5 @@ threading.Thread(target=start_fake_server, daemon=True).start()
 
 app = Application.builder().token(BOT_TOKEN).build()
 app.add_handler(MessageHandler(filters.ChatType.CHANNEL, forward_message))
-print("🚀 Бот готов! Подпись теперь 100% работает!")
+print("🚀 Бот готов. Он удаляет 'Автор:' и вставляет @nurikadambol!")
 app.run_polling(allowed_updates=['channel_post'])
