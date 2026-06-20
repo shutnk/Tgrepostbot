@@ -24,45 +24,56 @@ async def forward_message(update, context):
                 group_id = post.media_group_id
                 file_id = post.photo[-1].file_id
                 
-                # Добавляем фото в буфер
+                # Сохраняем текст из первого пришедшего поста
                 if group_id not in pending_albums:
-                    pending_albums[group_id] = []
-                pending_albums[group_id].append(file_id)
+                    pending_albums[group_id] = {
+                        "files": [],
+                        "text": post.caption or ""
+                    }
+                
+                pending_albums[group_id]["files"].append(file_id)
                 
                 # Создаём задачу на отправку, если это первое фото
-                if len(pending_albums[group_id]) == 1:
+                if len(pending_albums[group_id]["files"]) == 1:
                     asyncio.create_task(process_album(group_id, context))
             
             # Одиночное фото
             elif post.photo:
-                caption = re.sub(r'@\w+', NEW_AUTHOR, post.caption or "")
+                # Меняем @ники в тексте
+                new_caption = re.sub(r'@\w+', NEW_AUTHOR, post.caption or "")
                 await context.bot.send_photo(
                     chat_id=TARGET_CHANNEL,
                     photo=post.photo[-1].file_id,
-                    caption=caption
+                    caption=new_caption
                 )
-                print("✅ Одиночное фото переслано.")
+                print("✅ Одиночное фото переслано с заменой текста.")
 
 async def process_album(group_id, context):
     global pending_albums
     # Ждём 3 секунды, чтобы подтянулись остальные части альбома
     await asyncio.sleep(3)
     
-    # Забираем все собранные фото
-    files = pending_albums.get(group_id, [])
-    if not files:
+    # Забираем данные из буфера
+    album_data = pending_albums.get(group_id)
+    if not album_data:
         return
     
-    # Формируем медиа-группу (без подписи внутри, подпись добавим позже)
+    files = album_data["files"]
+    original_text = album_data["text"]
+    
+    # Формируем медиа-группу
     media_group = [InputMediaPhoto(media=fid) for fid in files]
     
-    # Отправляем альбом
+    # Меняем все @ники на @esen_baevich в тексте
+    new_text = re.sub(r'@\w+', NEW_AUTHOR, original_text)
+    
+    # Отправляем альбом с обновлённым текстом
     await context.bot.send_media_group(
         chat_id=TARGET_CHANNEL,
         media=media_group,
-        caption=f"📞 Для консультации и заказа:\n{NEW_AUTHOR}"
+        caption=new_text
     )
-    print(f"✅ Собран альбом из {len(files)} фото с подписью {NEW_AUTHOR}")
+    print(f"✅ Собран альбом из {len(files)} фото. Текст заменён на {NEW_AUTHOR}")
     
     # Очищаем буфер
     del pending_albums[group_id]
@@ -75,5 +86,5 @@ threading.Thread(target=start_fake_server, daemon=True).start()
 
 app = Application.builder().token(BOT_TOKEN).build()
 app.add_handler(MessageHandler(filters.ChatType.CHANNEL, forward_message))
-print("🚀 Бот с автосборкой альбомов запущен!")
+print("🚀 Бот запущен! Альбомы склеиваются, текст и @ники меняются.")
 app.run_polling(allowed_updates=['channel_post'])
