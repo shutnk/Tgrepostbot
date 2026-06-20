@@ -10,66 +10,63 @@ SOURCE_CHANNEL = "@trifferi098"
 TARGET_CHANNEL = "@trifferi097"
 NEW_AUTHOR = "@esen_baevich"
 
+# Хранилище для временных альбомов
+albums = {}
+
 async def forward_message(update, context):
+    global albums
     if update.channel_post:
         if update.channel_post.chat.username == SOURCE_CHANNEL.replace("@", ""):
             post = update.channel_post
-            
-            # Если это альбом (медиа-группа) - делаем сложную магию
-            if post.media_group_id:
-                try:
-                    # 1. Запоминаем ID группы и первую картинку
-                    group_id = post.media_group_id
-                    media_list = []
-                    
-                    # Берём первую картинку
-                    if post.photo:
-                        media_list.append(InputMediaPhoto(
-                            media=post.photo[-1].file_id,
-                            caption=None  # Пока без подписи
-                        ))
-                    
-                    # 2. Даём Telegram время, чтобы подтянуть остальные фото
-                    # (Это критически важно, иначе увидим только первую)
-                    await asyncio.sleep(2.5) 
-                    
-                    # 3. Просим бота дать нам ВСЕ обновления за последние секунды
-                    updates = await context.bot.get_updates(limit=10)
-                    
-                    # 4. Ищем в этих обновлениях фото с таким же media_group_id
-                    for upd in updates:
-                        if upd.channel_post and upd.channel_post.media_group_id == group_id:
-                            if upd.channel_post.photo and upd.channel_post.message_id != post.message_id:
-                                # Добавляем остальные фото в список
-                                media_list.append(InputMediaPhoto(
-                                    media=upd.channel_post.photo[-1].file_id
-                                ))
-                    
-                    # 5. Готовим финальную подпись
-                    original_text = post.caption or post.text or ""
-                    new_caption = re.sub(r'@\w+', NEW_AUTHOR, original_text)
-                    
-                    # 6. Отправляем собранный альбом! (Теперь он 100% целый)
-                    await context.bot.send_media_group(
+            original_text = post.caption or post.text or ""
+            new_caption = re.sub(r'@\w+', NEW_AUTHOR, original_text)
+
+            # Если это фото
+            if post.photo:
+                group_id = post.media_group_id
+                file_id = post.photo[-1].file_id
+
+                # Если это альбом
+                if group_id:
+                    if group_id not in albums:
+                        albums[group_id] = []
+                    albums[group_id].append(file_id)
+
+                    # Если это первое фото в альбоме, запускаем таймер
+                    if len(albums[group_id]) == 1:
+                        # ================== ВРЕМЯ ОЖИДАНИЯ (6 СЕКУНД) ==================
+                        await asyncio.sleep(6)  # Увеличили с 2.5 до 6 секунд
+                        
+                        media_group = []
+                        for fid in albums[group_id]:
+                            media_group.append(InputMediaPhoto(media=fid))
+                        
+                        await context.bot.send_media_group(
+                            chat_id=TARGET_CHANNEL,
+                            media=media_group,
+                            caption=new_caption
+                        )
+                        print(f"✅ ГРУППА ИЗ {len(albums[group_id])} ФОТО ОТПРАВЛЕНА! Подпись: {NEW_AUTHOR}")
+                        del albums[group_id]
+                else:
+                    # Одиночное фото
+                    await context.bot.send_photo(
                         chat_id=TARGET_CHANNEL,
-                        media=media_list,
-                        caption=new_caption  # Подпись прикрепляется к первому фото
+                        photo=file_id,
+                        caption=new_caption
                     )
-                    print(f"✅ АЛЬБОМ СОБРАН! ({len(media_list)} фото) Автор заменён на {NEW_AUTHOR}")
-                    
-                except Exception as e:
-                    print(f"❌ Ошибка сборки альбома: {e}")
-            
-            # Если это обычный пост (1 фото или текст) - просто пересылаем
-            elif post.photo:
-                original_text = post.caption or post.text or ""
-                new_caption = re.sub(r'@\w+', NEW_AUTHOR, original_text)
-                await context.bot.send_photo(
+                    print("✅ Одно фото переслано.")
+
+            # Видео
+            elif post.video:
+                await context.bot.send_video(
                     chat_id=TARGET_CHANNEL,
-                    photo=post.photo[-1].file_id,
+                    video=post.video.file_id,
                     caption=new_caption
                 )
-                print("✅ 1 фото переслано.")
+                print("✅ Видео переслано.")
+            
+            # Текст
             elif post.text:
                 new_text = re.sub(r'@\w+', NEW_AUTHOR, post.text)
                 await context.bot.send_message(
@@ -77,8 +74,10 @@ async def forward_message(update, context):
                     text=new_text
                 )
                 print("✅ Текст переслан.")
+            
+            # Остальные типы
             else:
-                await post.copy(chat_id=TARGET_CHANNEL)
+                await post.copy(chat_id=TARGET_CHANNEL, caption=new_caption)
                 print("✅ Другое скопировано.")
 
 def start_fake_server():
@@ -89,5 +88,5 @@ threading.Thread(target=start_fake_server, daemon=True).start()
 
 app = Application.builder().token(BOT_TOKEN).build()
 app.add_handler(MessageHandler(filters.ChatType.CHANNEL, forward_message))
-print("🚀 Бот с магией альбомов запущен! Жди 3 секунды для сборки.")
+print("🚀 Бот с УВЕЛИЧЕННЫМ ВРЕМЕНЕМ ОЖИДАНИЯ (6 сек) запущен!")
 app.run_polling(allowed_updates=['channel_post'])
