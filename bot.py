@@ -1,7 +1,6 @@
 import asyncio
 import threading
 import http.server
-import socketserver
 import re
 from telegram import Bot, InputMediaPhoto
 from telegram.ext import Application, MessageHandler, filters
@@ -11,7 +10,6 @@ SOURCE_CHANNEL = "@trifferi098"
 TARGET_CHANNEL = "@trifferi097"
 NEW_AUTHOR = "@esen_baevich"
 
-# Буфер для альбомов
 pending_albums = {}
 
 async def forward_message(update, context):
@@ -26,8 +24,10 @@ async def forward_message(update, context):
                 
                 if group_id not in pending_albums:
                     pending_albums[group_id] = []
+                
                 pending_albums[group_id].append(file_id)
                 
+                # Как только пришло 2+ фото, сразу склеиваем
                 if len(pending_albums[group_id]) >= 2:
                     await process_album(group_id, context)
             
@@ -58,32 +58,13 @@ async def process_album(group_id, context):
     )
     print(f"✅ Альбом из {len(files)} фото отправлен!")
 
-# ============================================
-# ДВОЙНОЙ СЕРВЕР (Порт 10000 для Telegram и Порт 80 для UptimeRobot)
-# ============================================
-class FakeHandler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
-
-def start_dual_server():
-    # Слушаем порт 80 (для UptimeRobot)
-    try:
-        with socketserver.TCPServer(("0.0.0.0", 80), FakeHandler) as httpd:
-            print("✅ Порт 80 открыт для UptimeRobot (будильник)")
-            threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    except Exception as e:
-        print("⚠️ Порт 80 занят, но это не страшно")
-    
-    # Слушаем порт 10000 (для Telegram Webhook)
-    server = http.server.HTTPServer(('0.0.0.0', 10000), FakeHandler)
+def start_fake_server():
+    server = http.server.HTTPServer(('0.0.0.0', 10000), http.server.BaseHTTPRequestHandler)
     server.serve_forever()
 
-threading.Thread(target=start_dual_server, daemon=True).start()
-# ============================================
+threading.Thread(target=start_fake_server, daemon=True).start()
 
 app = Application.builder().token(BOT_TOKEN).build()
 app.add_handler(MessageHandler(filters.ChatType.CHANNEL, forward_message))
-print("🚀 Бот запущен! UptimeRobot будет будить через порт 80.")
+print("🚀 Бот запущен! Склеивает альбомы мгновенно, UptimeRobot будит порт 10000.")
 app.run_polling(allowed_updates=['channel_post'])
