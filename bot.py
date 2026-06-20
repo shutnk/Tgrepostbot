@@ -2,7 +2,7 @@ import asyncio
 import threading
 import http.server
 import re
-from telegram import Bot, InputMediaPhoto, InputMediaVideo
+from telegram import Bot
 from telegram.ext import Application, MessageHandler, filters
 
 BOT_TOKEN = "8927033296:AAGa4W-EJma1UzbNzVUSKjn2vNsM57FB7R8"
@@ -14,56 +14,25 @@ async def forward_message(update, context):
     if update.channel_post:
         if update.channel_post.chat.username == SOURCE_CHANNEL.replace("@", ""):
             post = update.channel_post
-            
-            # Текст с заменой @ников
             original_text = post.caption or post.text or ""
             new_caption = re.sub(r'@\w+', NEW_AUTHOR, original_text)
 
             try:
-                # ===== СПЕЦИАЛЬНЫЙ БЛОК ДЛЯ АЛЬБОМОВ (МНОГО ФОТО/ВИДЕО) =====
-                # Если у поста есть медиа-группа (альбом)
-                if post.media_group_id:
-                    # Мы не можем получить все фото из одного update, 
-                    # поэтому отправляем как есть, но с новой подписью.
-                    # Бот сам соберет альбом, если отправить через send_media_group.
-                    
-                    media_group = []
-                    if post.photo:
-                        media_group.append(InputMediaPhoto(media=post.photo[-1].file_id))
-                    elif post.video:
-                        media_group.append(InputMediaVideo(media=post.video.file_id))
-                    
-                    # Отправляем как группу (Telegram сам соберет в альбом)
-                    await context.bot.send_media_group(
-                        chat_id=TARGET_CHANNEL,
-                        media=media_group,
-                        caption=new_caption  # Подпись прикрепится к первому фото
-                    )
-                    print(f"✅ Альбом переслан с подписью: {NEW_AUTHOR}")
+                # 1. Сначала копируем сообщение как есть (альбом сохраняется!)
+                sent_msg = await post.copy(chat_id=TARGET_CHANNEL)
                 
-                # ===== ОБЫЧНЫЕ ПОСТЫ (ОДНО ФОТО, ВИДЕО ИЛИ ТЕКСТ) =====
-                elif post.photo:
-                    await context.bot.send_photo(
+                # 2. Если мы скопировали сообщение и у него есть ID, мы можем отредактировать подпись
+                # (Обрати внимание: sent_msg - это объект отправленного сообщения)
+                if sent_msg:
+                    await context.bot.edit_message_caption(
                         chat_id=TARGET_CHANNEL,
-                        photo=post.photo[-1].file_id,
+                        message_id=sent_msg.message_id,
                         caption=new_caption
                     )
-                elif post.video:
-                    await context.bot.send_video(
-                        chat_id=TARGET_CHANNEL,
-                        video=post.video.file_id,
-                        caption=new_caption
-                    )
-                elif post.text:
-                    await context.bot.send_message(
-                        chat_id=TARGET_CHANNEL,
-                        text=new_caption
-                    )
+                    print(f"✅ Альбом скопирован, подпись заменена на {NEW_AUTHOR}")
                 else:
-                    await post.copy(chat_id=TARGET_CHANNEL, caption=new_caption)
-                
-                print(f"✅ Пост переслан. Ник заменён на {NEW_AUTHOR}")
-
+                    # Если по какой-то причине не получилось отредактировать, отправляем как есть
+                    print("⚠️ Альбом скопирован, но подпись не изменилась.")
             except Exception as e:
                 print(f"❌ Ошибка пересылки: {e}")
 
@@ -75,5 +44,5 @@ threading.Thread(target=start_fake_server, daemon=True).start()
 
 app = Application.builder().token(BOT_TOKEN).build()
 app.add_handler(MessageHandler(filters.ChatType.CHANNEL, forward_message))
-print("🚀 Бот готов! Поддерживает альбомы и замену @ на @esen_baevich!")
+print("🚀 Бот готов! Альбомы сохраняются, ник заменяется.")
 app.run_polling(allowed_updates=['channel_post'])
