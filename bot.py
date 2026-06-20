@@ -1,6 +1,7 @@
 import asyncio
 import threading
 import http.server
+import socketserver
 import re
 from telegram import Bot, InputMediaPhoto
 from telegram.ext import Application, MessageHandler, filters
@@ -10,6 +11,7 @@ SOURCE_CHANNEL = "@trifferi098"
 TARGET_CHANNEL = "@trifferi097"
 NEW_AUTHOR = "@esen_baevich"
 
+# Буфер для альбомов
 pending_albums = {}
 
 async def forward_message(update, context):
@@ -22,14 +24,18 @@ async def forward_message(update, context):
                 group_id = post.media_group_id
                 file_id = post.photo[-1].file_id
                 
+                # Сохраняем текст из первого пришедшего поста
                 if group_id not in pending_albums:
-                    pending_albums[group_id] = []
+                    pending_albums[group_id] = {
+                        "files": [],
+                        "text": post.caption or ""
+                    }
                 
-                pending_albums[group_id].append(file_id)
+                pending_albums[group_id]["files"].append(file_id)
                 
-                # Как только пришло 2+ фото, сразу склеиваем
-                if len(pending_albums[group_id]) >= 2:
-                    await process_album(group_id, context)
+                # ЗАПУСКАЕМ ТАЙМЕР ТОЛЬКО ОДИН РАЗ (при первом фото)
+                if len(pending_albums[group_id]["files"]) == 1:
+                    asyncio.create_task(process_album_after_delay(group_id, context))
             
             elif post.photo:
                 new_caption = re.sub(r'@\w+', NEW_AUTHOR, post.caption or "")
@@ -46,25 +52,56 @@ async def forward_message(update, context):
                     text=new_text
                 )
 
-async def process_album(group_id, context):
+async def process_album_after_delay(group_id, context):
     global pending_albums
-    files = pending_albums.pop(group_id, [])
-    if not files: return
+    # Даём время Telegram подтянуть ВСЕ фото (даже если их 10 штук)
+    await asyncio.sleep(3)
     
+    album_data = pending_albums.pop(group_id, None)
+    if not album_data:
+        return
+    
+    files = album_data["files"]
+    original_text = album_data["text"]
+    
+    # Меняем @ники в тексте
+    new_text = re.sub(r'@\w+', NEW_AUTHOR, original_text)
+    
+    # Собираем медиа-группу
     media_group = [InputMediaPhoto(media=fid) for fid in files]
+    
+    # ОТПРАВЛЯЕМ АЛЬБОМ С ТЕКСТОМ (caption прикрепляется к первому фото)
     await context.bot.send_media_group(
         chat_id=TARGET_CHANNEL,
-        media=media_group
+        media=media_group,
+        caption=new_text
     )
-    print(f"✅ Альбом из {len(files)} фото отправлен!")
+    print(f"✅ Альбом из {len(files)} фото отправлен с текстом!")
 
-def start_fake_server():
-    server = http.server.HTTPServer(('0.0.0.0', 10000), http.server.BaseHTTPRequestHandler)
+# ============================================
+# ДВОЙНОЙ СЕРВЕР (Порт 80 и 10000)
+# ============================================
+class FakeHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+def start_dual_server():
+    try:
+        with socketserver.TCPServer(("0.0.0.0", 80), FakeHandler) as httpd:
+            print("✅ Порт 80 открыт для UptimeRobot")
+            threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    except:
+        pass
+    
+    server = http.server.HTTPServer(('0.0.0.0', 10000), FakeHandler)
     server.serve_forever()
 
-threading.Thread(target=start_fake_server, daemon=True).start()
+threading.Thread(target=start_dual_server, daemon=True).start()
+# ============================================
 
 app = Application.builder().token(BOT_TOKEN).build()
 app.add_handler(MessageHandler(filters.ChatType.CHANNEL, forward_message))
-print("🚀 Бот запущен! Склеивает альбомы мгновенно, UptimeRobot будит порт 10000.")
+print("🚀 Бот с универсальным сборщиком (2-10 фото) запущен!")
 app.run_polling(allowed_updates=['channel_post'])
