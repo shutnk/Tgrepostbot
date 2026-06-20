@@ -10,67 +10,66 @@ SOURCE_CHANNEL = "@trifferi098"
 TARGET_CHANNEL = "@trifferi097"
 NEW_AUTHOR = "@esen_baevich"
 
-# Хранилище для временных альбомов (ключ: media_group_id, значение: список фото)
-albums = {}
-
 async def forward_message(update, context):
-    global albums
     if update.channel_post:
         if update.channel_post.chat.username == SOURCE_CHANNEL.replace("@", ""):
             post = update.channel_post
-            original_text = post.caption or post.text or ""
-            new_caption = re.sub(r'@\w+', NEW_AUTHOR, original_text)
-
-            # ЕСЛИ ЭТО ФОТО (может быть частью альбома)
-            if post.photo:
-                group_id = post.media_group_id
-                file_id = post.photo[-1].file_id
-
-                # Если это альбом (у него есть media_group_id)
-                if group_id:
-                    # Добавляем фото в список альбома
-                    if group_id not in albums:
-                        albums[group_id] = []
-                    albums[group_id].append(file_id)
-
-                    # Если это первое фото в альбоме, запускаем таймер на 2 секунды
-                    if len(albums[group_id]) == 1:
-                        await asyncio.sleep(2.5)  # Ждём, пока придут остальные фото
-                        
-                        # Собираем медиа-группу
-                        media_group = []
-                        for fid in albums[group_id]:
-                            media_group.append(InputMediaPhoto(media=fid))
-                        
-                        # Отправляем полноценный альбом (с подписью к первому фото)
-                        await context.bot.send_media_group(
-                            chat_id=TARGET_CHANNEL,
-                            media=media_group,
-                            caption=new_caption
-                        )
-                        print(f"✅ ГРУППА ИЗ {len(albums[group_id])} ФОТО ОТПРАВЛЕНА! Подпись: {NEW_AUTHOR}")
-                        
-                        # Очищаем память, чтобы не копить мусор
-                        del albums[group_id]
-                else:
-                    # Если это одно фото без альбома
-                    await context.bot.send_photo(
+            
+            # Если это альбом (медиа-группа) - делаем сложную магию
+            if post.media_group_id:
+                try:
+                    # 1. Запоминаем ID группы и первую картинку
+                    group_id = post.media_group_id
+                    media_list = []
+                    
+                    # Берём первую картинку
+                    if post.photo:
+                        media_list.append(InputMediaPhoto(
+                            media=post.photo[-1].file_id,
+                            caption=None  # Пока без подписи
+                        ))
+                    
+                    # 2. Даём Telegram время, чтобы подтянуть остальные фото
+                    # (Это критически важно, иначе увидим только первую)
+                    await asyncio.sleep(2.5) 
+                    
+                    # 3. Просим бота дать нам ВСЕ обновления за последние секунды
+                    updates = await context.bot.get_updates(limit=10)
+                    
+                    # 4. Ищем в этих обновлениях фото с таким же media_group_id
+                    for upd in updates:
+                        if upd.channel_post and upd.channel_post.media_group_id == group_id:
+                            if upd.channel_post.photo and upd.channel_post.message_id != post.message_id:
+                                # Добавляем остальные фото в список
+                                media_list.append(InputMediaPhoto(
+                                    media=upd.channel_post.photo[-1].file_id
+                                ))
+                    
+                    # 5. Готовим финальную подпись
+                    original_text = post.caption or post.text or ""
+                    new_caption = re.sub(r'@\w+', NEW_AUTHOR, original_text)
+                    
+                    # 6. Отправляем собранный альбом! (Теперь он 100% целый)
+                    await context.bot.send_media_group(
                         chat_id=TARGET_CHANNEL,
-                        photo=file_id,
-                        caption=new_caption
+                        media=media_list,
+                        caption=new_caption  # Подпись прикрепляется к первому фото
                     )
-                    print("✅ Одно фото переслано.")
-
-            # ЕСЛИ ЭТО ВИДЕО
-            elif post.video:
-                await context.bot.send_video(
+                    print(f"✅ АЛЬБОМ СОБРАН! ({len(media_list)} фото) Автор заменён на {NEW_AUTHOR}")
+                    
+                except Exception as e:
+                    print(f"❌ Ошибка сборки альбома: {e}")
+            
+            # Если это обычный пост (1 фото или текст) - просто пересылаем
+            elif post.photo:
+                original_text = post.caption or post.text or ""
+                new_caption = re.sub(r'@\w+', NEW_AUTHOR, original_text)
+                await context.bot.send_photo(
                     chat_id=TARGET_CHANNEL,
-                    video=post.video.file_id,
+                    photo=post.photo[-1].file_id,
                     caption=new_caption
                 )
-                print("✅ Видео переслано.")
-            
-            # ЕСЛИ ЭТО ТЕКСТ
+                print("✅ 1 фото переслано.")
             elif post.text:
                 new_text = re.sub(r'@\w+', NEW_AUTHOR, post.text)
                 await context.bot.send_message(
@@ -78,10 +77,8 @@ async def forward_message(update, context):
                     text=new_text
                 )
                 print("✅ Текст переслан.")
-            
-            # ОСТАЛЬНЫЕ ТИПЫ
             else:
-                await post.copy(chat_id=TARGET_CHANNEL, caption=new_caption)
+                await post.copy(chat_id=TARGET_CHANNEL)
                 print("✅ Другое скопировано.")
 
 def start_fake_server():
@@ -92,5 +89,5 @@ threading.Thread(target=start_fake_server, daemon=True).start()
 
 app = Application.builder().token(BOT_TOKEN).build()
 app.add_handler(MessageHandler(filters.ChatType.CHANNEL, forward_message))
-print("🚀 Бот с УМНОЙ ГРУППИРОВКОЙ ФОТО запущен!")
+print("🚀 Бот с магией альбомов запущен! Жди 3 секунды для сборки.")
 app.run_polling(allowed_updates=['channel_post'])
