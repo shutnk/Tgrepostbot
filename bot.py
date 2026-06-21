@@ -1,29 +1,89 @@
+import asyncio
 import threading
+import re
 from flask import Flask
-from telegram import Bot
+from telegram import Bot, InputMediaPhoto
 from telegram.ext import Application, MessageHandler, filters
 
 BOT_TOKEN = "8927033296:AAGa4W-EJma1UzbNzVUSKjn2vNsM57FB7R8"
 TARGET_CHANNEL = "@trifferi097"
+NEW_AUTHOR = "@esen_baevich"
 
-# Flask-сервер для бодрости
+# Flask для бодрости
 app_flask = Flask(__name__)
 @app_flask.route('/')
 def home():
     return "Bot is alive!", 200
 threading.Thread(target=lambda: app_flask.run(host="0.0.0.0", port=10000, threaded=True), daemon=True).start()
 
-async def forward_message(update, context):
-    # Эта строчка напечатает ВСЁ, что приходит боту, прямо в логи Render
-    print(f"🔥🔥🔥 ЧТО-ТО ПРИШЛО! Chat ID: {update.effective_chat.id}")
-    
-    # Если пришло сообщение, пересылаем его
-    if update.message:
-        await update.message.copy(chat_id=TARGET_CHANNEL)
-        print("✅ УСПЕШНО ПЕРЕСЛАНО!")
+# Буфер для сборки альбомов
+pending_albums = {}
 
-# Запускаем бота
+async def forward_message(update, context):
+    global pending_albums
+    if update.message:
+        post = update.message
+
+        # Альбом (несколько фото)
+        if post.photo and post.media_group_id:
+            group_id = post.media_group_id
+            file_id = post.photo[-1].file_id
+            
+            # Сохраняем текст с первого фото
+            if group_id not in pending_albums:
+                pending_albums[group_id] = {
+                    "files": [],
+                    "text": post.caption or ""
+                }
+            
+            pending_albums[group_id]["files"].append(file_id)
+            
+            # Запускаем таймер только для первого фото
+            if len(pending_albums[group_id]["files"]) == 1:
+                asyncio.create_task(process_album_after_delay(group_id, context))
+
+        # Одиночное фото
+        elif post.photo:
+            new_caption = re.sub(r'@\w+', NEW_AUTHOR, post.caption or "")
+            await context.bot.send_photo(
+                chat_id=TARGET_CHANNEL,
+                photo=post.photo[-1].file_id,
+                caption=new_caption
+            )
+            print("✅ Одиночное фото")
+
+        # Текст
+        elif post.text:
+            new_text = re.sub(r'@\w+', NEW_AUTHOR, post.text)
+            await context.bot.send_message(
+                chat_id=TARGET_CHANNEL,
+                text=new_text
+            )
+            print("✅ Текст")
+
+async def process_album_after_delay(group_id, context):
+    global pending_albums
+    await asyncio.sleep(3)  # Ждём 3 секунды, чтобы Telegram подтянул все фото
+    
+    album_data = pending_albums.pop(group_id, None)
+    if not album_data:
+        return
+    
+    files = album_data["files"]
+    original_text = album_data["text"]
+    new_text = re.sub(r'@\w+', NEW_AUTHOR, original_text)
+    
+    media_group = [InputMediaPhoto(media=fid) for fid in files]
+    
+    await context.bot.send_media_group(
+        chat_id=TARGET_CHANNEL,
+        media=media_group,
+        caption=new_text
+    )
+    print(f"✅ Альбом из {len(files)} фото собран и отправлен!")
+
+# Запуск
 app = Application.builder().token(BOT_TOKEN).build()
 app.add_handler(MessageHandler(filters.ALL, forward_message))
-print("🚀 Бот запущен! Жду сообщений...")
+print("🚀 Бот с группировкой фото запущен!")
 app.run_polling(allowed_updates=['message', 'channel_post'])
