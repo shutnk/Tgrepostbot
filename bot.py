@@ -68,40 +68,21 @@ async def handle_link(update, context):
                 
                 msg_id = int(link.split('/')[-1])
                 
-                # Проверяем, отправляли ли уже
+                # Проверяем дубли
                 source_chat = await context.bot.get_chat(SOURCE_CHANNEL)
                 if is_posted(msg_id, source_chat.id):
                     await update.message.reply_text(f"⏭️ Пост {msg_id} уже скопирован.")
                     return
 
-                # ===== ОСНОВНОЕ ИЗМЕНЕНИЕ =====
-                # Вместо get_message используем get_updates, чтобы достать пост
-                # (бот должен быть админом в SOURCE_CHANNEL с правом чтения)
-                updates = await context.bot.get_updates(limit=100)
-                found_msg = None
+                # ===== ПОЛУЧАЕМ ОРИГИНАЛЬНЫЙ ПОСТ =====
+                # В этой версии библиотеки get_message работает!
+                msg = await context.bot.get_message(chat_id=SOURCE_CHANNEL, message_id=msg_id)
                 
-                for u in updates:
-                    if u.channel_post and u.channel_post.message_id == msg_id:
-                        if u.channel_post.chat.username == SOURCE_CHANNEL.replace("@", ""):
-                            found_msg = u.channel_post
-                            break
-                
-                if not found_msg:
-                    # Если не нашли пост, пробуем просто отправить ссылку
-                    await context.bot.send_message(
-                        chat_id=TARGET_CHANNEL,
-                        text=f"🔗 Ссылка на пост: {link}\n\nТема: {topic_name}\n\n✍️ {NEW_AUTHOR}"
-                    )
-                    save_posted(msg_id, 0, source_chat.id)
-                    await update.message.reply_text(f"✅ Ссылка на пост {msg_id} отправлена (пост не найден).")
-                    return
-
-                # Заменяем текст
-                new_text = re.sub(r'@\w+', NEW_AUTHOR, found_msg.caption or found_msg.text or "")
+                new_text = re.sub(r'@\w+', NEW_AUTHOR, msg.caption or msg.text or "")
                 
                 # ===== СОЗДАНИЕ ТЕМЫ И ОТПРАВКА =====
                 try:
-                    sent_msg = await found_msg.copy(
+                    sent_msg = await msg.copy(
                         chat_id=TARGET_CHANNEL,
                         caption=new_text,
                         message_thread_id=topic_name
@@ -112,7 +93,7 @@ async def handle_link(update, context):
                         chat_id=TARGET_CHANNEL,
                         name=topic_name
                     )
-                    sent_msg = await found_msg.copy(
+                    sent_msg = await msg.copy(
                         chat_id=TARGET_CHANNEL,
                         caption=new_text,
                         message_thread_id=topic_name
@@ -131,5 +112,5 @@ async def handle_link(update, context):
 app = Application.builder().token(BOT_TOKEN).build()
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
 
-print("🚀 Бот готов! Работает через get_updates.")
+print("🚀 Бот готов! Версия 21.7, get_message работает.")
 app.run_polling(allowed_updates=['message'])
