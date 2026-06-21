@@ -1,6 +1,7 @@
 import asyncio
 import threading
 import re
+import time
 from flask import Flask
 from telegram import Bot, InputMediaPhoto
 from telegram.ext import Application, MessageHandler, filters
@@ -11,13 +12,18 @@ TARGET_CHANNEL = "@trifferi11"
 NEW_AUTHOR = "@esen_baevich"
 # ==============================================
 
+# Flask запускаем в отдельном фоновом потоке
 app_flask = Flask(__name__)
 @app_flask.route('/')
 def home():
     return "Bot is alive!", 200
-threading.Thread(target=lambda: app_flask.run(host="0.0.0.0", port=10000, threaded=True), daemon=True).start()
 
-# Буфер для ожидания сообщений
+def run_flask():
+    app_flask.run(host="0.0.0.0", port=10000, threaded=True)
+
+threading.Thread(target=run_flask, daemon=True).start()
+
+# Буфер для ожидания сообщений (ручной режим)
 pending_posts = {}
 
 async def handle_forward(update, context):
@@ -28,7 +34,6 @@ async def handle_forward(update, context):
         # Если это команда "Из темы: ..."
         if msg.text and msg.text.startswith("Из темы:"):
             topic_name = msg.text.replace("Из темы:", "").strip()
-            # Запоминаем, что этот пользователь хочет отправить в эту тему
             pending_posts[user_id] = {"topic": topic_name, "files": []}
             await msg.reply_text(f"✅ Тема '{topic_name}' выбрана! Теперь отправь пост с фото.")
             return
@@ -68,9 +73,15 @@ async def handle_forward(update, context):
                 del pending_posts[user_id]
                 return
 
-# Запуск
-app = Application.builder().token(BOT_TOKEN).build()
-app.add_handler(MessageHandler(filters.ALL, handle_forward))
+# ===== ЗАПУСК БОТА С ПРАВИЛЬНЫМ ЦИКЛОМ =====
+async def main():
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_handler(MessageHandler(filters.ALL, handle_forward))
+    print("🚀 Бот с ручным режимом и альбомами запущен!")
+    await app.run_polling(allowed_updates=['message'])
 
-print("🚀 Бот с ручным режимом и альбомами запущен!")
-app.run_polling(allowed_updates=['message'])
+if __name__ == "__main__":
+    # Создаём новый цикл событий и запускаем бота в нём
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(main())
