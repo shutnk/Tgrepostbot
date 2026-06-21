@@ -7,11 +7,17 @@ SOURCE_CHANNEL = "@blvckrooom"
 TARGET_CHANNEL = "@trifferi02"
 
 async def copy_posts():
-    print("🚀 Начинаю копирование через бота (прямо на сервере)...")
+    print("🚀 Сбрасываю память бота...")
     bot = Bot(token=BOT_TOKEN)
     
     try:
+        # Сбрасываем offset (бот забывает всё, что видел раньше)
+        await bot.get_updates(offset=0, limit=1)
+        
+        # Теперь получаем всё, что есть в истории
+        print("📥 Загружаю посты...")
         updates = await bot.get_updates(limit=100)
+        
         count = 0
         for u in updates:
             if u.channel_post:
@@ -21,6 +27,7 @@ async def copy_posts():
                     await msg.copy(chat_id=TARGET_CHANNEL, caption=new_text)
                     count += 1
                     print(f"✅ Скопирован пост {count}")
+        
         print(f"🎉 Готово! Скопировано {count} постов.")
     except Exception as e:
         print(f"❌ Ошибка: {e}")
