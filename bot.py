@@ -9,8 +9,8 @@ from telegram.ext import Application, MessageHandler, filters
 
 # ================= НАСТРОЙКИ =================
 BOT_TOKEN = "8927033296:AAGa4W-EJma1UzbNzVUSKjn2vNsM57FB7R8"
-SOURCE_CHANNEL = "@blvckrooom"
-TARGET_CHANNEL = "@trifferi02"
+SOURCE_CHANNEL = "@blvckrooom"           # Откуда берём
+TARGET_CHANNEL = "@trifferi11"           # Куда отправляем (теперь сюда!)
 NEW_AUTHOR = "@esen_baevich"
 
 DB_NAME = "posted_messages.db"
@@ -66,46 +66,37 @@ async def handle_link(update, context):
                 link = parts[0]
                 topic_name = parts[1]
                 
-                # Извлекаем ID поста
                 msg_id = int(link.split('/')[-1])
                 
-                # Проверяем, отправляли ли мы уже этот пост
                 source_chat = await context.bot.get_chat(SOURCE_CHANNEL)
                 if is_posted(msg_id, source_chat.id):
                     await update.message.reply_text(f"⏭️ Пост {msg_id} уже скопирован.")
                     return
 
-                # Получаем сообщение
+                # Получаем сообщение (бота должны быть админом в SOURCE_CHANNEL)
                 msg = await context.bot.get_message(chat_id=SOURCE_CHANNEL, message_id=msg_id)
                 
-                # Заменяем текст
                 new_text = re.sub(r'@\w+', NEW_AUTHOR, msg.caption or msg.text or "")
                 
                 # ===== СОЗДАНИЕ ТЕМЫ И ОТПРАВКА =====
-                # Бот пытается отправить пост в тему по названию.
-                # Если такой темы нет — Telegram автоматически выдаст ошибку,
-                # которую мы перехватим и создадим тему вручную.
                 try:
-                    # Пробуем отправить в тему
                     sent_msg = await msg.copy(
                         chat_id=TARGET_CHANNEL,
                         caption=new_text,
                         message_thread_id=topic_name
                     )
                 except Exception:
-                    # Если темы нет — создаём её!
+                    # Если темы нет — создаём её
                     await context.bot.create_forum_topic(
                         chat_id=TARGET_CHANNEL,
                         name=topic_name
                     )
-                    # Теперь отправляем повторно (тема уже есть)
                     sent_msg = await msg.copy(
                         chat_id=TARGET_CHANNEL,
                         caption=new_text,
                         message_thread_id=topic_name
                     )
                 
-                # Сохраняем в базу
                 save_posted(msg_id, sent_msg.message_id, source_chat.id)
                 
                 await update.message.reply_text(f"✅ Пост {msg_id} в тему '{topic_name}'!")
@@ -119,5 +110,5 @@ async def handle_link(update, context):
 app = Application.builder().token(BOT_TOKEN).build()
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
 
-print("🚀 Бот готов! Создаёт темы и загружает посты.")
+print("🚀 Бот готов! Создаёт темы в @trifferi11 и загружает посты.")
 app.run_polling(allowed_updates=['message'])
