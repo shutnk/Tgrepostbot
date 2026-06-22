@@ -1,56 +1,76 @@
 import asyncio
 import re
-from telegram import Bot, InputMediaPhoto
-from telegram.ext import Application, MessageHandler, filters
+from telethon import TelegramClient, events
+from flask import Flask
+import threading
 
+# ================= НАСТРОЙКИ =================
 BOT_TOKEN = "8927033296:AAGa4W-EJma1UzbNzVUSKjn2vNsM57FB7R8"
 TARGET_CHANNEL = "@trifferi11"
 NEW_AUTHOR = "@esen_baevich"
+# ==============================================
 
+# Flask работает отдельно, чтобы Render был жив
+app_flask = Flask(__name__)
+@app_flask.route('/')
+def home():
+    return "Bot is alive!", 200
+threading.Thread(target=lambda: app_flask.run(host="0.0.0.0", port=10000), daemon=True).start()
+
+# Клиент Telethon (он не конфликтует с asyncio)
+client = TelegramClient('bot_session', api_id=2040, api_hash='b18441a1ff607e10a989891a5462e627')
+
+# Буфер для ручного режима
 pending_posts = {}
 
-async def handle_forward(update, context):
-    if update.message:
-        msg = update.message
-        user_id = msg.from_user.id
+@client.on(events.NewMessage)
+async def handle_forward(event):
+    msg = event.message
+    if not msg:
+        return
+    user_id = msg.sender_id
+    
+    # Если команда "Из темы: ..."
+    if msg.text and msg.text.startswith("Из темы:"):
+        topic_name = msg.text.replace("Из темы:", "").strip()
+        pending_posts[user_id] = {"topic": topic_name, "files": []}
+        await msg.reply(f"✅ Тема '{topic_name}' выбрана! Отправь пост.")
+        return
+    
+    # Если у пользователя есть активная тема
+    if user_id in pending_posts:
+        topic_name = pending_posts[user_id]["topic"]
         
-        if msg.text and msg.text.startswith("Из темы:"):
-            topic_name = msg.text.replace("Из темы:", "").strip()
-            pending_posts[user_id] = {"topic": topic_name, "files": []}
-            await msg.reply_text(f"✅ Тема '{topic_name}' выбрана! Отправь пост.")
+        if msg.photo:
+            pending_posts[user_id]["files"].append(msg.photo[-1].id)
             return
         
-        if user_id in pending_posts:
-            topic_name = pending_posts[user_id]["topic"]
-            if msg.photo:
-                pending_posts[user_id]["files"].append(msg.photo[-1].file_id)
-                return
-            if msg.text:
-                caption = re.sub(r'@\w+', NEW_AUTHOR, msg.text)
-                await asyncio.sleep(2)
-                files = pending_posts[user_id]["files"]
-                if files:
-                    media_group = [InputMediaPhoto(media=fid) for fid in files]
-                    await context.bot.send_media_group(
-                        chat_id=TARGET_CHANNEL,
-                        media=media_group,
-                        caption=caption,
-                        message_thread_id=topic_name
-                    )
-                    await msg.reply_text(f"✅ Альбом в тему '{topic_name}'!")
-                else:
-                    await context.bot.send_message(
-                        chat_id=TARGET_CHANNEL,
-                        text=caption,
-                        message_thread_id=topic_name
-                    )
-                del pending_posts[user_id]
+        if msg.text:
+            caption = re.sub(r'@\w+', NEW_AUTHOR, msg.text)
+            await asyncio.sleep(2)
+            
+            files = pending_posts[user_id]["files"]
+            if files:
+                # Отправляем альбом в тему канала
+                await client.send_file(
+                    TARGET_CHANNEL,
+                    files,
+                    caption=caption,
+                    message_thread_id=topic_name
+                )
+                await msg.reply(f"✅ Альбом в тему '{topic_name}'!")
+            else:
+                await client.send_message(
+                    TARGET_CHANNEL,
+                    caption,
+                    message_thread_id=topic_name
+                )
+            del pending_posts[user_id]
 
 async def main():
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(MessageHandler(filters.ALL, handle_forward))
-    print("🚀 Бот-воркер запущен! Жду команды...")
-    await app.run_polling(allowed_updates=['message'])
+    print("🚀 Бот (Telethon + Flask) запущен! Жду команды...")
+    await client.start(bot_token=BOT_TOKEN)
+    await client.run_until_disconnected()
 
 if __name__ == "__main__":
     asyncio.run(main())
