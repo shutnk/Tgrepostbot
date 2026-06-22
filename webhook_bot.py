@@ -1,8 +1,10 @@
+import asyncio
 import re
 import threading
 import http.server
-from telegram import Bot, InputMediaPhoto
-from telegram.ext import Application, MessageHandler, filters
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
+from aiogram.types import InputMediaPhoto
 
 # ================= НАСТРОЙКИ =================
 BOT_TOKEN = "8927033296:AAGa4W-EJma1UzbNzVUSKjn2vNsM57FB7R8"
@@ -17,59 +19,58 @@ def run_fake_server():
 
 threading.Thread(target=run_fake_server, daemon=True).start()
 
+# Инициализация бота
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
+
 # Буфер для ручного режима
 pending_posts = {}
 
-def handle_forward(update, context):
-    if update.message:
-        msg = update.message
-        user_id = msg.from_user.id
+@dp.message()
+async def handle_forward(message: types.Message):
+    user_id = message.from_user.id
+    
+    # Команда "Из темы: ..."
+    if message.text and message.text.startswith("Из темы:"):
+        topic_name = message.text.replace("Из темы:", "").strip()
+        pending_posts[user_id] = {"topic": topic_name, "files": []}
+        await message.reply(f"✅ Тема '{topic_name}' выбрана! Отправь пост.")
+        return
+    
+    # Если активная тема
+    if user_id in pending_posts:
+        topic_name = pending_posts[user_id]["topic"]
         
-        # Если команда "Из темы: ..."
-        if msg.text and msg.text.startswith("Из темы:"):
-            topic_name = msg.text.replace("Из темы:", "").strip()
-            pending_posts[user_id] = {"topic": topic_name, "files": []}
-            msg.reply_text(f"✅ Тема '{topic_name}' выбрана! Отправь пост.")
+        if message.photo:
+            pending_posts[user_id]["files"].append(message.photo[-1].file_id)
             return
         
-        # Если активная тема
-        if user_id in pending_posts:
-            topic_name = pending_posts[user_id]["topic"]
+        if message.text:
+            caption = re.sub(r'@\w+', NEW_AUTHOR, message.text)
+            await asyncio.sleep(2)
             
-            if msg.photo:
-                pending_posts[user_id]["files"].append(msg.photo[-1].file_id)
-                return
-            
-            if msg.text:
-                caption = re.sub(r'@\w+', NEW_AUTHOR, msg.text)
-                import time
-                time.sleep(2)
-                
-                files = pending_posts[user_id]["files"]
-                if files:
-                    media_group = [InputMediaPhoto(media=fid) for fid in files]
-                    context.bot.send_media_group(
-                        chat_id=TARGET_CHANNEL,
-                        media=media_group,
-                        caption=caption,
-                        message_thread_id=topic_name
-                    )
-                    msg.reply_text(f"✅ Альбом в тему '{topic_name}'!")
-                else:
-                    context.bot.send_message(
-                        chat_id=TARGET_CHANNEL,
-                        text=caption,
-                        message_thread_id=topic_name
-                    )
-                del pending_posts[user_id]
+            files = pending_posts[user_id]["files"]
+            if files:
+                media_group = [InputMediaPhoto(media=fid) for fid in files]
+                await bot.send_media_group(
+                    chat_id=TARGET_CHANNEL,
+                    media=media_group,
+                    caption=caption,
+                    message_thread_id=topic_name
+                )
+                await message.reply(f"✅ Альбом отправлен в тему '{topic_name}'!")
+            else:
+                await bot.send_message(
+                    chat_id=TARGET_CHANNEL,
+                    text=caption,
+                    message_thread_id=topic_name
+                )
+            del pending_posts[user_id]
 
-# Запуск через Application (без asyncio, синхронно)
-def main():
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(MessageHandler(filters.ALL, handle_forward))
-    
-    print("🚀 Бот запущен (версия 20.7)! Жду команды 'Из темы:'...")
-    app.run_polling(allowed_updates=['message'])
+# Запуск бота
+async def main():
+    print("🚀 Бот на aiogram запущен! Жду команды...")
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
