@@ -56,21 +56,15 @@ async def handle_forward(update, context):
                     )
                 del pending_posts[user_id]
 
-# ===== ЗАПУСК В ПРАВИЛЬНОМ ЦИКЛЕ =====
+# ===== ЗАПУСК ЧЕРЕЗ POLLING (БЕЗ КОНФЛИКТОВ) =====
 async def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.ALL, handle_forward))
     
-    print("🚀 Бот запущен через Webhook! Бесконечных циклов больше нет.")
+    print("🚀 Бот запущен через Polling. Никаких event loop конфликтов!")
     
-    # Запускаем вебхук
-    await app.run_webhook(
-        listen="0.0.0.0",
-        port=10000,
-        url_path="webhook",
-        webhook_url="https://tgrepostbot.onrender.com/webhook"
-    )
+    # Запускаем простой Polling без Webhook
+    await app.run_polling(allowed_updates=['message'])
 
 if __name__ == "__main__":
-    # Правильный запуск asyncio
     asyncio.run(main())
