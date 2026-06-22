@@ -1,5 +1,7 @@
 import asyncio
 import re
+import threading
+import http.server
 from telegram import Bot, InputMediaPhoto
 from telegram.ext import Application, MessageHandler, filters
 
@@ -8,6 +10,14 @@ BOT_TOKEN = "8927033296:AAGa4W-EJma1UzbNzVUSKjn2vNsM57FB7R8"
 TARGET_CHANNEL = "@trifferi11"
 NEW_AUTHOR = "@esen_baevich"
 # ==============================================
+
+# ===== Фейковый веб-сервер (чтобы Render не убивал процесс) =====
+def run_fake_server():
+    server = http.server.HTTPServer(("0.0.0.0", 10000), http.server.BaseHTTPRequestHandler)
+    server.serve_forever()
+
+threading.Thread(target=run_fake_server, daemon=True).start()
+# ===============================================================
 
 # Буфер для ожидания сообщений
 pending_posts = {}
@@ -56,14 +66,12 @@ async def handle_forward(update, context):
                     )
                 del pending_posts[user_id]
 
-# ===== ЗАПУСК ЧЕРЕЗ POLLING (БЕЗ КОНФЛИКТОВ) =====
+# ===== ЗАПУСК БОТА =====
 async def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.ALL, handle_forward))
     
-    print("🚀 Бот запущен через Polling. Никаких event loop конфликтов!")
-    
-    # Запускаем простой Polling без Webhook
+    print("🚀 Бот запущен с фейковым сервером! Render не убьёт процесс.")
     await app.run_polling(allowed_updates=['message'])
 
 if __name__ == "__main__":
