@@ -35,18 +35,10 @@ def tg_request(method, data=None):
 def get_updates(offset=0):
     return tg_request("getUpdates", {"offset": offset, "timeout": 30})
 
-# Функция создания темы (форума) в канале
-def create_topic(topic_name):
-    # Если тема с таким названием уже есть, Telegram вернёт ошибку — мы её проигнорируем
-    return tg_request("createForumTopic", {
-        "chat_id": TARGET_CHANNEL,
-        "name": topic_name
-    })
-
 # Основной цикл бота
 def main_loop():
     last_update_id = 0
-    print("🚀 Бот запущен! Создаёт темы и отправляет посты...")
+    print("🚀 Бот запущен! Жду команды 'Из темы:'...")
     
     while True:
         try:
@@ -91,10 +83,7 @@ def main_loop():
                         
                         files = pending_posts[user_id]["files"]
                         if files:
-                            # 1. Сначала пытаемся создать тему (если нет — она проигнорируется)
-                            create_topic(topic_name)
-                            
-                            # 2. Формируем альбом
+                            # Формируем альбом
                             media = [{"type": "photo", "media": fid} for fid in files]
                             tg_request("sendMediaGroup", {
                                 "chat_id": TARGET_CHANNEL,
@@ -108,7 +97,6 @@ def main_loop():
                             })
                         else:
                             # Если фото не пришли (только текст)
-                            create_topic(topic_name)
                             tg_request("sendMessage", {
                                 "chat_id": TARGET_CHANNEL,
                                 "text": caption,
