@@ -1,3 +1,4 @@
+import asyncio
 import re
 import threading
 from flask import Flask
@@ -20,7 +21,7 @@ threading.Thread(target=lambda: app_flask.run(host="0.0.0.0", port=10000, thread
 # Буфер для ручного режима
 pending_posts = {}
 
-def handle_forward(update, context):
+async def handle_forward(update, context):
     if update.message:
         msg = update.message
         user_id = msg.from_user.id
@@ -29,7 +30,7 @@ def handle_forward(update, context):
         if msg.text and msg.text.startswith("Из темы:"):
             topic_name = msg.text.replace("Из темы:", "").strip()
             pending_posts[user_id] = {"topic": topic_name, "files": []}
-            msg.reply_text(f"✅ Тема '{topic_name}' выбрана! Отправь пост.")
+            await msg.reply_text(f"✅ Тема '{topic_name}' выбрана! Отправь пост.")
             return
         
         # Если активная тема
@@ -42,34 +43,34 @@ def handle_forward(update, context):
             
             if msg.text:
                 caption = re.sub(r'@\w+', NEW_AUTHOR, msg.text)
-                import time
-                time.sleep(2)
+                await asyncio.sleep(2)
                 
                 files = pending_posts[user_id]["files"]
                 if files:
                     media_group = [InputMediaPhoto(media=fid) for fid in files]
-                    context.bot.send_media_group(
+                    await context.bot.send_media_group(
                         chat_id=TARGET_CHANNEL,
                         media=media_group,
                         caption=caption,
                         message_thread_id=topic_name
                     )
-                    msg.reply_text(f"✅ Альбом в тему '{topic_name}'!")
+                    await msg.reply_text(f"✅ Альбом в тему '{topic_name}'!")
                 else:
-                    context.bot.send_message(
+                    await context.bot.send_message(
                         chat_id=TARGET_CHANNEL,
                         text=caption,
                         message_thread_id=topic_name
                     )
                 del pending_posts[user_id]
 
-# Запуск бота (без asyncio, чисто синхронно)
-def main():
+# Запуск бота (правильный асинхронный)
+async def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.ALL, handle_forward))
     
     print("🚀 Бот (Flask + PTB) запущен! Жду команды 'Из темы:'...")
-    app.run_polling(allowed_updates=['message'])
+    await app.run_polling(allowed_updates=['message'])
 
 if __name__ == "__main__":
-    main()
+    # Правильный запуск асинхронной функции
+    asyncio.run(main())
