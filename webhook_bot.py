@@ -1,8 +1,5 @@
 import asyncio
-import threading
 import re
-import time
-from flask import Flask
 from telegram import Bot, InputMediaPhoto
 from telegram.ext import Application, MessageHandler, filters
 
@@ -12,18 +9,7 @@ TARGET_CHANNEL = "@trifferi11"
 NEW_AUTHOR = "@esen_baevich"
 # ==============================================
 
-# Flask запускаем в отдельном фоновом потоке
-app_flask = Flask(__name__)
-@app_flask.route('/')
-def home():
-    return "Bot is alive!", 200
-
-def run_flask():
-    app_flask.run(host="0.0.0.0", port=10000, threaded=True)
-
-threading.Thread(target=run_flask, daemon=True).start()
-
-# Буфер для ожидания сообщений (ручной режим)
+# Буфер для ожидания сообщений
 pending_posts = {}
 
 async def handle_forward(update, context):
@@ -45,12 +31,11 @@ async def handle_forward(update, context):
             # Если это фото — добавляем в буфер
             if msg.photo:
                 pending_posts[user_id]["files"].append(msg.photo[-1].file_id)
-                return  # Ждём остальные фото
+                return
             
             # Если это текст (подпись) — сохраняем и отправляем альбом
             if msg.text:
                 caption = re.sub(r'@\w+', NEW_AUTHOR, msg.text)
-                # Ждём 2 секунды, чтобы гарантировать, что все фото пришли
                 await asyncio.sleep(2)
                 
                 files = pending_posts[user_id]["files"]
@@ -69,19 +54,16 @@ async def handle_forward(update, context):
                         text=caption,
                         message_thread_id=topic_name
                     )
-                # Удаляем пользователя из буфера
                 del pending_posts[user_id]
-                return
 
-# ===== ЗАПУСК БОТА С ПРАВИЛЬНЫМ ЦИКЛОМ =====
-async def main():
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(MessageHandler(filters.ALL, handle_forward))
-    print("🚀 Бот с ручным режимом и альбомами запущен!")
-    await app.run_polling(allowed_updates=['message'])
+# Запуск через Webhook (без Flask, без конфликтов)
+app = Application.builder().token(BOT_TOKEN).build()
+app.add_handler(MessageHandler(filters.ALL, handle_forward))
 
-if __name__ == "__main__":
-    # Создаём новый цикл событий и запускаем бота в нём
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(main())
+print("🚀 Бот запущен через Webhook! Бесконечных циклов больше нет.")
+app.run_webhook(
+    listen="0.0.0.0",
+    port=10000,
+    url_path="webhook",
+    webhook_url="https://tgrepostbot.onrender.com/webhook"
+)
