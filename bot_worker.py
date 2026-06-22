@@ -1,8 +1,6 @@
 import asyncio
 import re
-from telethon import TelegramClient, events
-from flask import Flask
-import threading
+from telethon import TelegramClient
 
 # ================= НАСТРОЙКИ =================
 BOT_TOKEN = "8927033296:AAGa4W-EJma1UzbNzVUSKjn2vNsM57FB7R8"
@@ -10,14 +8,7 @@ TARGET_CHANNEL = "@trifferi11"
 NEW_AUTHOR = "@esen_baevich"
 # ==============================================
 
-# Flask работает отдельно, чтобы Render был жив
-app_flask = Flask(__name__)
-@app_flask.route('/')
-def home():
-    return "Bot is alive!", 200
-threading.Thread(target=lambda: app_flask.run(host="0.0.0.0", port=10000), daemon=True).start()
-
-# Клиент Telethon (он не конфликтует с asyncio)
+# Клиент Telethon
 client = TelegramClient('bot_session', api_id=2040, api_hash='b18441a1ff607e10a989891a5462e627')
 
 # Буфер для ручного режима
@@ -30,14 +21,12 @@ async def handle_forward(event):
         return
     user_id = msg.sender_id
     
-    # Если команда "Из темы: ..."
     if msg.text and msg.text.startswith("Из темы:"):
         topic_name = msg.text.replace("Из темы:", "").strip()
         pending_posts[user_id] = {"topic": topic_name, "files": []}
         await msg.reply(f"✅ Тема '{topic_name}' выбрана! Отправь пост.")
         return
     
-    # Если у пользователя есть активная тема
     if user_id in pending_posts:
         topic_name = pending_posts[user_id]["topic"]
         
@@ -51,7 +40,6 @@ async def handle_forward(event):
             
             files = pending_posts[user_id]["files"]
             if files:
-                # Отправляем альбом в тему канала
                 await client.send_file(
                     TARGET_CHANNEL,
                     files,
@@ -68,7 +56,7 @@ async def handle_forward(event):
             del pending_posts[user_id]
 
 async def main():
-    print("🚀 Бот (Telethon + Flask) запущен! Жду команды...")
+    print("🚀 Бот (Telethon) запущен! Жду команды...")
     await client.start(bot_token=BOT_TOKEN)
     await client.run_until_disconnected()
 
