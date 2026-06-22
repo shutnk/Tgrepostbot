@@ -11,7 +11,7 @@ TARGET_CHANNEL = "@trifferi11"
 NEW_AUTHOR = "@esen_baevich"
 # ==============================================
 
-# Flask для поддержки порта (Render не усыпит)
+# Flask для поддержки порта
 app = Flask(__name__)
 @app.route('/')
 def home():
@@ -21,24 +21,32 @@ threading.Thread(target=lambda: app.run(host="0.0.0.0", port=10000), daemon=True
 # Буфер для ручного режима
 pending_posts = {}
 
-# Функция отправки сообщения в Telegram (через простые HTTP-запросы)
-def send_telegram(method, data):
+# Функция отправки запросов к Telegram API
+def tg_request(method, data=None):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
     try:
         resp = requests.post(url, data=data, timeout=10)
         return resp.json()
     except Exception as e:
-        print(f"❌ Ошибка: {e}")
+        print(f"❌ Ошибка API: {e}")
         return None
 
-# Функция получения обновлений (проверка сообщений)
+# Функция получения обновлений
 def get_updates(offset=0):
-    return send_telegram("getUpdates", {"offset": offset, "timeout": 30})
+    return tg_request("getUpdates", {"offset": offset, "timeout": 30})
 
-# Основной цикл бота (в синхронном режиме, без asyncio)
+# Функция создания темы (форума) в канале
+def create_topic(topic_name):
+    # Если тема с таким названием уже есть, Telegram вернёт ошибку — мы её проигнорируем
+    return tg_request("createForumTopic", {
+        "chat_id": TARGET_CHANNEL,
+        "name": topic_name
+    })
+
+# Основной цикл бота
 def main_loop():
     last_update_id = 0
-    print("🚀 Бот запущен (синхронный)! Жду команды...")
+    print("🚀 Бот запущен! Создаёт темы и отправляет посты...")
     
     while True:
         try:
@@ -60,13 +68,13 @@ def main_loop():
                 if text.startswith("Из темы:"):
                     topic_name = text.replace("Из темы:", "").strip()
                     pending_posts[user_id] = {"topic": topic_name, "files": []}
-                    send_telegram("sendMessage", {
+                    tg_request("sendMessage", {
                         "chat_id": user_id,
-                        "text": f"✅ Тема '{topic_name}' выбрана! Отправь пост."
+                        "text": f"✅ Тема '{topic_name}' выбрана! Отправляй пост."
                     })
                     continue
                 
-                # Обработка активной темы
+                # Если у пользователя есть активная тема
                 if user_id in pending_posts:
                     topic_name = pending_posts[user_id]["topic"]
                     
@@ -79,33 +87,36 @@ def main_loop():
                     # Если пришёл текст (подпись к альбому)
                     if text:
                         caption = re.sub(r'@\w+', NEW_AUTHOR, text)
-                        time.sleep(2)  # Ждём все фото
+                        time.sleep(2)  # Ждём, пока подтянутся все фото
                         
                         files = pending_posts[user_id]["files"]
                         if files:
-                            # Отправляем все фото как альбом
+                            # 1. Сначала пытаемся создать тему (если нет — она проигнорируется)
+                            create_topic(topic_name)
+                            
+                            # 2. Формируем альбом
                             media = [{"type": "photo", "media": fid} for fid in files]
-                            send_telegram("sendMediaGroup", {
+                            tg_request("sendMediaGroup", {
                                 "chat_id": TARGET_CHANNEL,
                                 "media": str(media).replace("'", '"'),
                                 "caption": caption,
                                 "message_thread_id": topic_name
                             })
-                            send_telegram("sendMessage", {
+                            tg_request("sendMessage", {
                                 "chat_id": user_id,
                                 "text": f"✅ Альбом в тему '{topic_name}'!"
                             })
                         else:
-                            send_telegram("sendMessage", {
+                            # Если фото не пришли (только текст)
+                            create_topic(topic_name)
+                            tg_request("sendMessage", {
                                 "chat_id": TARGET_CHANNEL,
                                 "text": caption,
                                 "message_thread_id": topic_name
                             })
                         del pending_posts[user_id]
                 
-                # Небольшая задержка, чтобы не перегружать API
                 time.sleep(0.5)
-                
         except Exception as e:
             print(f"❌ Ошибка в цикле: {e}")
             time.sleep(5)
