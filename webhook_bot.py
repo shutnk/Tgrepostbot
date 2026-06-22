@@ -56,14 +56,21 @@ async def handle_forward(update, context):
                     )
                 del pending_posts[user_id]
 
-# Запуск через Webhook (без Flask, без конфликтов)
-app = Application.builder().token(BOT_TOKEN).build()
-app.add_handler(MessageHandler(filters.ALL, handle_forward))
+# ===== ЗАПУСК В ПРАВИЛЬНОМ ЦИКЛЕ =====
+async def main():
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_handler(MessageHandler(filters.ALL, handle_forward))
+    
+    print("🚀 Бот запущен через Webhook! Бесконечных циклов больше нет.")
+    
+    # Запускаем вебхук
+    await app.run_webhook(
+        listen="0.0.0.0",
+        port=10000,
+        url_path="webhook",
+        webhook_url="https://tgrepostbot.onrender.com/webhook"
+    )
 
-print("🚀 Бот запущен через Webhook! Бесконечных циклов больше нет.")
-app.run_webhook(
-    listen="0.0.0.0",
-    port=10000,
-    url_path="webhook",
-    webhook_url="https://tgrepostbot.onrender.com/webhook"
-)
+if __name__ == "__main__":
+    # Правильный запуск asyncio
+    asyncio.run(main())
