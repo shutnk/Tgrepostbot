@@ -1,7 +1,7 @@
 import asyncio
 import re
 import threading
-from flask import Flask
+import http.server
 from telegram import Bot, InputMediaPhoto
 from telegram.ext import Application, MessageHandler, filters
 
@@ -11,12 +11,12 @@ TARGET_CHANNEL = "@trifferi11"
 NEW_AUTHOR = "@esen_baevich"
 # ==============================================
 
-# Flask-сервер (держит Render активным)
-app_flask = Flask(__name__)
-@app_flask.route('/')
-def home():
-    return "Bot is alive!", 200
-threading.Thread(target=lambda: app_flask.run(host="0.0.0.0", port=10000, threaded=True), daemon=True).start()
+# Фейковый веб-сервер (чтобы Render не убивал процесс)
+def run_fake_server():
+    server = http.server.HTTPServer(("0.0.0.0", 10000), http.server.BaseHTTPRequestHandler)
+    server.serve_forever()
+
+threading.Thread(target=run_fake_server, daemon=True).start()
 
 # Буфер для ручного режима
 pending_posts = {}
@@ -26,14 +26,14 @@ async def handle_forward(update, context):
         msg = update.message
         user_id = msg.from_user.id
         
-        # Если команда "Из темы: ..."
+        # Если это команда "Из темы: ..."
         if msg.text and msg.text.startswith("Из темы:"):
             topic_name = msg.text.replace("Из темы:", "").strip()
             pending_posts[user_id] = {"topic": topic_name, "files": []}
             await msg.reply_text(f"✅ Тема '{topic_name}' выбрана! Отправь пост.")
             return
         
-        # Если активная тема
+        # Если у пользователя есть активная тема
         if user_id in pending_posts:
             topic_name = pending_posts[user_id]["topic"]
             
@@ -63,14 +63,18 @@ async def handle_forward(update, context):
                     )
                 del pending_posts[user_id]
 
-# Запуск бота (правильный асинхронный)
+# Запуск бота через Webhook
 async def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.ALL, handle_forward))
     
-    print("🚀 Бот (Flask + PTB) запущен! Жду команды 'Из темы:'...")
-    await app.run_polling(allowed_updates=['message'])
+    print("🚀 Бот запущен через Webhook! Жду команды 'Из темы:'...")
+    await app.run_webhook(
+        listen="0.0.0.0",
+        port=10000,
+        url_path="webhook",
+        webhook_url="https://tgrepostbot.onrender.com/webhook"
+    )
 
 if __name__ == "__main__":
-    # Правильный запуск асинхронной функции
     asyncio.run(main())
