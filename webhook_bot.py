@@ -11,15 +11,15 @@ TARGET_CHANNEL = "@trifferi11"
 NEW_AUTHOR = "@esen_baevich"
 # ==============================================
 
-# ===== Фейковый веб-сервер (чтобы Render не убивал процесс) =====
+# ===== Фейковый веб-сервер (чтобы Render был доволен) =====
 def run_fake_server():
     server = http.server.HTTPServer(("0.0.0.0", 10000), http.server.BaseHTTPRequestHandler)
     server.serve_forever()
 
 threading.Thread(target=run_fake_server, daemon=True).start()
-# ===============================================================
+# ===========================================================
 
-# Буфер для ожидания сообщений
+# Буфер для ожидания сообщений (ручной режим)
 pending_posts = {}
 
 async def handle_forward(update, context):
@@ -66,13 +66,13 @@ async def handle_forward(update, context):
                     )
                 del pending_posts[user_id]
 
-# ===== ЗАПУСК БОТА =====
-async def main():
+# ===== ЗАПУСК БОТА (без asyncio.run, надёжный) =====
+def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.ALL, handle_forward))
     
-    print("🚀 Бот запущен с фейковым сервером! Render не убьёт процесс.")
-    await app.run_polling(allowed_updates=['message'])
+    print("🚀 Бот запущен! Жду команды 'Из темы:'...")
+    app.run_polling(allowed_updates=['message'])
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
