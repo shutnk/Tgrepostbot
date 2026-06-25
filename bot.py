@@ -1,12 +1,13 @@
 import os
+import time
+import requests
 import logging
-import asyncio
-from telegram import Bot, Update
-from telegram.ext import Application, CommandHandler, ContextTypes
 
+# === НАСТРОЙКИ ===
 TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
 CHAT_ID = "@trifferi_katalog"
 
+# === ПОЛНЫЙ СПИСОК ТЕМ ===
 TOPICS = [
     "Часы", "Сумки Hermes", "Обувь Hermes", "Ремень Hermes", "Сумки CHANEL",
     "Женская одежда", "Сумки THE ROW", "Chanel", "Сумки MIU MIU", "Одежда для детей",
@@ -36,38 +37,54 @@ TOPICS = [
     "Сумки MOYNAT PARIS"
 ]
 
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-async def create_topics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"🚀 Начинаю создание {len(TOPICS)} тем в {CHAT_ID}...")
-    bot = context.bot
-    created = 0; skipped = 0; errors = 0
-    for idx, topic_name in enumerate(TOPICS, 1):
-        try:
-            await bot.create_forum_topic(chat_id=CHAT_ID, name=topic_name)
-            created += 1
-            await update.message.reply_text(f"✅ [{idx}/{len(TOPICS)}] Создано: {topic_name}")
-        except Exception as e:
-            if "TOPIC_NAME_OCCUPIED" in str(e) or "already exists" in str(e):
-                skipped += 1
-                await update.message.reply_text(f"➖ [{idx}/{len(TOPICS)}] Пропущено (уже есть): {topic_name}")
-            else:
-                errors += 1
-                await update.message.reply_text(f"❌ [{idx}/{len(TOPICS)}] Ошибка '{topic_name}': {e}")
-    await update.message.reply_text(f"🏁 ЗАВЕРШЕНО. Создано: {created}, Пропущено: {skipped}, Ошибок: {errors}")
+def send_message(text):
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    payload = {"chat_id": CHAT_ID, "text": text}
+    try:
+        requests.post(url, data=payload, timeout=10)
+    except:
+        pass
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Бот запущен!\nИспользуй: /createtopics")
+def create_topic(name):
+    url = f"https://api.telegram.org/bot{TOKEN}/createForumTopic"
+    payload = {"chat_id": CHAT_ID, "name": name}
+    try:
+        resp = requests.post(url, data=payload, timeout=15)
+        data = resp.json()
+        if data.get("ok"):
+            return True, None
+        error = data.get("description", "")
+        if "TOPIC_NAME_OCCUPIED" in error or "already exists" in error:
+            return True, "exists"
+        return False, error
+    except Exception as e:
+        return False, str(e)
 
 def main():
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("createtopics", create_topics_command))
-    print("[SWILL] Бот запущен на Render. Ожидание команд...")
-    app.run_polling()
+    logger.info("🚀 Начинаю создание тем...")
+    created = 0; skipped = 0; errors = 0
+    total = len(TOPICS)
+
+    for idx, name in enumerate(TOPICS, 1):
+        success, msg = create_topic(name)
+        if success and msg == "exists":
+            logger.info(f"➖ [{idx}/{total}] Пропущено (уже есть): {name}")
+            skipped += 1
+        elif success:
+            logger.info(f"✅ [{idx}/{total}] Создано: {name}")
+            created += 1
+        else:
+            logger.info(f"❌ [{idx}/{total}] Ошибка: {name} — {msg}")
+            errors += 1
+
+        time.sleep(1)
+
+    result = f"🏁 ЗАВЕРШЕНО. Создано: {created}, Пропущено: {skipped}, Ошибок: {errors}"
+    logger.info(result)
+    send_message(result)
 
 if __name__ == "__main__":
     main()
