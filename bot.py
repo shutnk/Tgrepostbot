@@ -9,7 +9,6 @@ TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
 TARGET_GROUP_ID = -1003991874844
 SOURCE_CHANNEL = "blvckrooom"
 
-# === СЛОВАРЬ РАСПРЕДЕЛЕНИЯ ПО ТЕМАМ ===
 TOPIC_MAP = {
     "сумки hermes": "Сумки Hermes",
     "обувь hermes": "Обувь Hermes",
@@ -123,20 +122,15 @@ def get_channel_posts():
         
         soup = BeautifulSoup(response.text, 'html.parser')
         posts = []
-        
-        # Ищем все посты (сообщения) по классу tgme_widget_message
         message_divs = soup.find_all('div', class_='tgme_widget_message')
         
         for div in message_divs:
-            # Текст поста
             text_div = div.find('div', class_='tgme_widget_message_text')
             text = text_div.get_text() if text_div else ""
             
-            # Ссылка на пост
             link_tag = div.find('a', class_='tgme_widget_message_date')
             link = link_tag['href'] if link_tag else ""
             
-            # Картинка (если есть)
             img_tag = div.find('img')
             image_url = img_tag['src'] if img_tag else ""
             
@@ -154,7 +148,6 @@ def get_channel_posts():
         return []
 
 def send_to_topic(topic_name, text, image_url=None):
-    # Если есть картинка, отправляем как фото
     if image_url and image_url.startswith("http"):
         url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
         payload = {
@@ -169,7 +162,6 @@ def send_to_topic(topic_name, text, image_url=None):
         except:
             pass
     
-    # Если нет картинки, отправляем текст
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     payload = {
         "chat_id": TARGET_GROUP_ID,
@@ -183,14 +175,6 @@ def send_to_topic(topic_name, text, image_url=None):
 
 def main():
     logger.info("🚀 Запуск парсинга канала @blvckrooom...")
-    
-    # Устанавливаем зависимости (если нет bs4)
-    try:
-        import bs4
-    except ImportError:
-        logger.warning("Устанавливаю BeautifulSoup4...")
-        os.system("pip install beautifulsoup4")
-    
     posts = get_channel_posts()
     
     if not posts:
