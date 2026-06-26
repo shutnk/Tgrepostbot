@@ -3,11 +3,12 @@ import time
 import requests
 import re
 import logging
-from bs4 import BeautifulSoup
+import xml.etree.ElementTree as ET
 
 TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
 TARGET_GROUP_ID = -1003991874844
 SOURCE_CHANNEL = "blvckrooom"
+RSS_URL = f"https://t.me/s/{SOURCE_CHANNEL}.rss"
 
 TOPIC_MAP = {
     "сумки hermes": "Сумки Hermes",
@@ -112,39 +113,44 @@ def detect_topic(text):
 def replace_mentions(text):
     return re.sub(r'@\w+', '@esen_baevich', text)
 
-def get_channel_posts():
-    url = f"https://t.me/s/{SOURCE_CHANNEL}"
+def get_channel_posts_rss():
     try:
-        response = requests.get(url, timeout=20)
+        response = requests.get(RSS_URL, timeout=20)
         if response.status_code != 200:
-            logger.error(f"Ошибка: код {response.status_code}")
+            logger.error(f"RSS ошибка: код {response.status_code}")
             return []
         
-        soup = BeautifulSoup(response.text, 'html.parser')
+        root = ET.fromstring(response.text)
         posts = []
-        message_divs = soup.find_all('div', class_='tgme_widget_message')
         
-        for div in message_divs:
-            text_div = div.find('div', class_='tgme_widget_message_text')
-            text = text_div.get_text() if text_div else ""
+        # В RSS посты находятся в <item>
+        for item in root.findall('.//item'):
+            title_elem = item.find('title')
+            desc_elem = item.find('description')
             
-            link_tag = div.find('a', class_='tgme_widget_message_date')
-            link = link_tag['href'] if link_tag else ""
+            title = title_elem.text if title_elem is not None else ""
+            desc = desc_elem.text if desc_elem is not None else ""
             
-            img_tag = div.find('img')
-            image_url = img_tag['src'] if img_tag else ""
+            # Объединяем заголовок и описание
+            full_text = f"{title}\n\n{desc}"
             
-            if text or image_url:
+            # Ищем картинку в описании (часто бывает в HTML)
+            image_url = ""
+            if desc:
+                img_match = re.search(r'<img[^>]+src="([^"]+)"', desc)
+                if img_match:
+                    image_url = img_match.group(1)
+            
+            if full_text.strip():
                 posts.append({
-                    "text": text,
-                    "link": link,
+                    "text": full_text,
                     "image": image_url
                 })
         
-        logger.info(f"✅ Найдено {len(posts)} постов.")
+        logger.info(f"✅ RSS: Найдено {len(posts)} постов.")
         return posts
     except Exception as e:
-        logger.error(f"Ошибка парсинга: {e}")
+        logger.error(f"Ошибка RSS: {e}")
         return []
 
 def send_to_topic(topic_name, text, image_url=None):
@@ -174,11 +180,11 @@ def send_to_topic(topic_name, text, image_url=None):
         pass
 
 def main():
-    logger.info("🚀 Запуск парсинга канала @blvckrooom...")
-    posts = get_channel_posts()
+    logger.info("🚀 Запуск парсинга через RSS...")
+    posts = get_channel_posts_rss()
     
     if not posts:
-        logger.info("Постов не найдено.")
+        logger.info("Постов не найдено в RSS.")
         return
     
     for post in posts:
