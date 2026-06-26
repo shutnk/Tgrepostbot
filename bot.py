@@ -3,7 +3,6 @@ import time
 import requests
 import re
 import logging
-import xml.etree.ElementTree as ET
 
 TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
 TARGET_GROUP_ID = -1003991874844
@@ -113,44 +112,46 @@ def detect_topic(text):
 def replace_mentions(text):
     return re.sub(r'@\w+', '@esen_baevich', text)
 
-def get_channel_posts_rss():
+def get_channel_posts_rss_regex():
     try:
         response = requests.get(RSS_URL, timeout=20)
         if response.status_code != 200:
             logger.error(f"RSS ошибка: код {response.status_code}")
             return []
         
-        root = ET.fromstring(response.text)
+        raw_rss = response.text
         posts = []
         
-        # В RSS посты находятся в <item>
-        for item in root.findall('.//item'):
-            title_elem = item.find('title')
-            desc_elem = item.find('description')
+        # Разбиваем посты по <item>
+        items = re.findall(r'<item>(.*?)</item>', raw_rss, re.DOTALL)
+        
+        for item in items:
+            # Вытаскиваем заголовок
+            title_match = re.search(r'<title>(.*?)</title>', item, re.DOTALL)
+            title = title_match.group(1) if title_match else ""
             
-            title = title_elem.text if title_elem is not None else ""
-            desc = desc_elem.text if desc_elem is not None else ""
+            # Вытаскиваем описание
+            desc_match = re.search(r'<description>(.*?)</description>', item, re.DOTALL)
+            desc = desc_match.group(1) if desc_match else ""
             
-            # Объединяем заголовок и описание
-            full_text = f"{title}\n\n{desc}"
-            
-            # Ищем картинку в описании (часто бывает в HTML)
+            # Ссылка на картинку (если есть)
             image_url = ""
             if desc:
                 img_match = re.search(r'<img[^>]+src="([^"]+)"', desc)
                 if img_match:
                     image_url = img_match.group(1)
             
+            full_text = f"{title}\n\n{desc}"
             if full_text.strip():
                 posts.append({
                     "text": full_text,
                     "image": image_url
                 })
         
-        logger.info(f"✅ RSS: Найдено {len(posts)} постов.")
+        logger.info(f"✅ RSS (regex): Найдено {len(posts)} постов.")
         return posts
     except Exception as e:
-        logger.error(f"Ошибка RSS: {e}")
+        logger.error(f"Ошибка RSS парсинга: {e}")
         return []
 
 def send_to_topic(topic_name, text, image_url=None):
@@ -180,8 +181,8 @@ def send_to_topic(topic_name, text, image_url=None):
         pass
 
 def main():
-    logger.info("🚀 Запуск парсинга через RSS...")
-    posts = get_channel_posts_rss()
+    logger.info("🚀 Запуск парсинга RSS через regex...")
+    posts = get_channel_posts_rss_regex()
     
     if not posts:
         logger.info("Постов не найдено в RSS.")
