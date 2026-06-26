@@ -3,11 +3,11 @@ import time
 import requests
 import re
 import logging
-import json
+from bs4 import BeautifulSoup
 
 TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
 TARGET_GROUP_ID = -1003991874844
-SOURCE_CHANNEL = "blvckrooom"  # без @, для ссылок
+SOURCE_CHANNEL = "blvckrooom"
 
 # === СЛОВАРЬ РАСПРЕДЕЛЕНИЯ ПО ТЕМАМ ===
 TOPIC_MAP = {
@@ -114,26 +114,62 @@ def replace_mentions(text):
     return re.sub(r'@\w+', '@esen_baevich', text)
 
 def get_channel_posts():
-    """Парсит публичный канал через HTML-запрос"""
     url = f"https://t.me/s/{SOURCE_CHANNEL}"
     try:
         response = requests.get(url, timeout=20)
-        html = response.text
-        # Парсим сообщения через регулярные выражения
-        # Это упрощённый парсер. В реальном проекте нужно использовать BeautifulSoup
+        if response.status_code != 200:
+            logger.error(f"Ошибка: код {response.status_code}")
+            return []
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
         posts = []
-        # Пример: ищем блоки с сообщениями
-        # В реальности здесь нужен более сложный парсинг.
-        # Чтобы не писать 1000 строк парсинга, я дам простую логику.
-        # Находим все ссылки на посты
-        # ... (код парсинга пропущен для краткости, но логика ясна)
-        logger.info("✅ Парсинг канала выполнен.")
-        return []
+        
+        # Ищем все посты (сообщения) по классу tgme_widget_message
+        message_divs = soup.find_all('div', class_='tgme_widget_message')
+        
+        for div in message_divs:
+            # Текст поста
+            text_div = div.find('div', class_='tgme_widget_message_text')
+            text = text_div.get_text() if text_div else ""
+            
+            # Ссылка на пост
+            link_tag = div.find('a', class_='tgme_widget_message_date')
+            link = link_tag['href'] if link_tag else ""
+            
+            # Картинка (если есть)
+            img_tag = div.find('img')
+            image_url = img_tag['src'] if img_tag else ""
+            
+            if text or image_url:
+                posts.append({
+                    "text": text,
+                    "link": link,
+                    "image": image_url
+                })
+        
+        logger.info(f"✅ Найдено {len(posts)} постов.")
+        return posts
     except Exception as e:
         logger.error(f"Ошибка парсинга: {e}")
         return []
 
-def send_to_topic(topic_name, text):
+def send_to_topic(topic_name, text, image_url=None):
+    # Если есть картинка, отправляем как фото
+    if image_url and image_url.startswith("http"):
+        url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
+        payload = {
+            "chat_id": TARGET_GROUP_ID,
+            "photo": image_url,
+            "caption": f"📌 **{topic_name}**\n\n{text}",
+            "parse_mode": "Markdown"
+        }
+        try:
+            requests.post(url, data=payload, timeout=15)
+            return
+        except:
+            pass
+    
+    # Если нет картинки, отправляем текст
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     payload = {
         "chat_id": TARGET_GROUP_ID,
@@ -147,19 +183,29 @@ def send_to_topic(topic_name, text):
 
 def main():
     logger.info("🚀 Запуск парсинга канала @blvckrooom...")
+    
+    # Устанавливаем зависимости (если нет bs4)
+    try:
+        import bs4
+    except ImportError:
+        logger.warning("Устанавливаю BeautifulSoup4...")
+        os.system("pip install beautifulsoup4")
+    
     posts = get_channel_posts()
     
     if not posts:
-        logger.info("Постов не найдено или ошибка парсинга.")
+        logger.info("Постов не найдено.")
         return
     
     for post in posts:
         text = post.get("text", "")
+        image = post.get("image", "")
         if text:
             topic = detect_topic(text)
             new_text = replace_mentions(text)
-            send_to_topic(topic, new_text)
-            time.sleep(2)
+            send_to_topic(topic, new_text, image)
+            logger.info(f"📦 Отправлено в {topic}: {new_text[:50]}...")
+            time.sleep(3)
 
 if __name__ == "__main__":
     main()
