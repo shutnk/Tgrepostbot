@@ -3,6 +3,10 @@ import re
 import logging
 import os
 import base64
+import threading
+
+# Создаём цикл событий в отдельном потоке до импорта Pyrogram
+import asyncio
 from pyrogram import Client
 from pyrogram.enums import ParseMode
 
@@ -129,7 +133,7 @@ def detect_topic(text):
 def replace_mentions(text):
     return re.sub(r'@\w+', MENTION_REPLACE, text)
 
-def copy_posts():
+def run_pyrogram():
     if not os.path.exists(SESSION_B64_FILE):
         logger.error(f"❌ Файл {SESSION_B64_FILE} не найден!")
         return
@@ -150,7 +154,6 @@ def copy_posts():
     source_id = client.get_chat(SOURCE_CHANNEL)
     target_id = client.get_chat(TARGET_GROUP)
     
-    # Получаем список тем через Pyrogram (работает)
     topics = {}
     try:
         for topic in client.get_forum_topics(target_id.id):
@@ -210,7 +213,7 @@ def copy_posts():
 
 def main():
     logger.info("🚀 Запуск финального Pyrogram бота...")
-    copy_posts()
+    run_pyrogram()
 
 if __name__ == "__main__":
     main()
