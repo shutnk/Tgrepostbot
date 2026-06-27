@@ -4,8 +4,9 @@ import re
 import logging
 import os
 import base64
-from telethon import TelegramClient, functions
+from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
+from telethon.tl.functions.channels import GetForumTopics
 
 # ================================
 # НАСТРОЙКИ
@@ -162,16 +163,17 @@ async def copy_posts():
 
     try:
         group = await client.get_entity(TARGET_GROUP)
-        # =========================================================
-        # ПРАВИЛЬНЫЙ ВЫЗОВ ДЛЯ ТВОЕЙ ВЕРСИИ TELEHON
-        # =========================================================
-        result = await client(functions.channels.GetForumTopics(
+        # =============================================================
+        # ПРЯМОЙ ВЫЗОВ ЧЕРЕЗ ИМПОРТИРОВАННЫЙ GetForumTopics
+        # =============================================================
+        request = GetForumTopics(
             channel=group,
             offset_date=0,
             offset_id=0,
             offset_topic=0,
             limit=100
-        ))
+        )
+        result = await client(request)
         topic_ids = {t.title: t.id for t in result.topics}
         logger.info(f"✅ Загружено ID тем: {list(topic_ids.keys())}")
     except Exception as e:
