@@ -3,7 +3,6 @@ import requests
 import time
 import re
 import logging
-import xml.etree.ElementTree as ET
 
 TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
 TARGET_GROUP = -1003991874844
@@ -123,31 +122,35 @@ def detect_topic(text):
 def replace_mentions(text):
     return re.sub(r'@\w+', MENTION_REPLACE, text)
 
-def get_channel_posts_rss():
+def get_channel_posts_rss_regex():
     url = f"https://t.me/s/{SOURCE_CHANNEL}.rss"
     try:
         resp = requests.get(url, timeout=20)
         if resp.status_code != 200:
             return []
-        root = ET.fromstring(resp.text)
+        raw = resp.text
         posts = []
-        for item in root.findall('.//item'):
-            title = item.find('title')
-            desc = item.find('description')
-            title_text = title.text if title is not None else ""
-            desc_text = desc.text if desc is not None else ""
-            full_text = f"{title_text}\n\n{desc_text}"
+        # Разбиваем посты по <item> через regex (это не ломается)
+        items = re.findall(r'<item>(.*?)</item>', raw, re.DOTALL)
+        for item in items:
+            title_match = re.search(r'<title>(.*?)</title>', item, re.DOTALL)
+            title = title_match.group(1) if title_match else ""
+            
+            desc_match = re.search(r'<description>(.*?)</description>', item, re.DOTALL)
+            desc = desc_match.group(1) if desc_match else ""
+            
+            full_text = f"{title}\n\n{desc}"
             image_url = ""
-            if desc_text:
-                img_match = re.search(r'<img[^>]+src="([^"]+)"', desc_text)
+            if desc:
+                img_match = re.search(r'<img[^>]+src="([^"]+)"', desc)
                 if img_match:
                     image_url = img_match.group(1)
             if full_text.strip():
                 posts.append({"text": full_text, "image": image_url})
-        logger.info(f"✅ RSS: Найдено {len(posts)} постов")
+        logger.info(f"✅ RSS (regex): Найдено {len(posts)} постов")
         return posts
     except Exception as e:
-        logger.error(f"Ошибка RSS: {e}")
+        logger.error(f"Ошибка RSS парсинга: {e}")
         return []
 
 def send_to_topic(topic_name, text, image_url):
@@ -177,8 +180,8 @@ def send_to_topic(topic_name, text, image_url):
         pass
 
 def main():
-    logger.info("🚀 Запуск RSS-парсера...")
-    posts = get_channel_posts_rss()
+    logger.info("🚀 Запуск RSS-парсера через regex...")
+    posts = get_channel_posts_rss_regex()
     if not posts:
         logger.info("Постов не найдено в RSS.")
         return
