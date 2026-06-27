@@ -165,12 +165,11 @@ async def copy_posts():
         logger.error(f"❌ Не удалось получить канал {SOURCE_CHANNEL}: {e}")
         return
 
-    # Получаем сущность группы и список тем (без импорта)
+    # Получаем сущность группы и список тем (исправленный вызов)
     try:
         group = await client.get_entity(TARGET_GROUP)
-        # Прямой вызов без импорта
         result = await client(
-            client._get_api().channels.GetForumTopics(
+            client.__class__.__dict__['channels'].GetForumTopics(
                 channel=group,
                 offset_date=0,
                 offset_id=0,
