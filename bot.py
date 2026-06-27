@@ -7,7 +7,6 @@ import logging
 import io
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
-from telethon.tl.functions.channels import GetForumTopicsRequest
 from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument
 
 API_ID = 17349
@@ -136,13 +135,16 @@ async def load_topic_ids(client):
     global topic_ids
     try:
         group = await client.get_entity(TARGET_GROUP)
-        result = await client(GetForumTopicsRequest(
-            channel=group,
-            offset_date=0,
-            offset_id=0,
-            offset_topic=0,
-            limit=100
-        ))
+        # Прямой вызов API вместо импорта
+        result = await client(
+            client._get_api().channels.GetForumTopics(
+                channel=group,
+                offset_date=0,
+                offset_id=0,
+                offset_topic=0,
+                limit=100
+            )
+        )
         for topic in result.topics:
             topic_ids[topic.title] = topic.id
         logger.info(f"✅ Загружено ID тем: {list(topic_ids.keys())}")
