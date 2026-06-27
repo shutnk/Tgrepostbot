@@ -1,18 +1,14 @@
 import os
-import base64
-import asyncio
+import requests
 import time
 import re
 import logging
-import io
-from telethon import TelegramClient
-from telethon.tl.functions.messages import GetHistoryRequest
+from bs4 import BeautifulSoup
 
-API_ID = 17349
-API_HASH = '344583e45741c457fe1862106095a5eb'
-SESSION_FILE = 'session.session'
-SOURCE_CHANNEL = '@blvckrooom'
+TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
 TARGET_GROUP = -1003991874844
+SOURCE_CHANNEL = "blvckrooom"
+
 MENTION_REPLACE = '@esen_baevich'
 
 TOPIC_MAP = {
@@ -115,8 +111,6 @@ TOPIC_MAP = {
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-topic_ids = {}
-
 def detect_topic(text):
     if not text:
         return "Ассортимент"
@@ -129,101 +123,65 @@ def detect_topic(text):
 def replace_mentions(text):
     return re.sub(r'@\w+', MENTION_REPLACE, text)
 
-async def load_topic_ids(client):
-    global topic_ids
+def get_channel_posts():
+    url = f"https://t.me/s/{SOURCE_CHANNEL}"
     try:
-        group = await client.get_entity(TARGET_GROUP)
-        result = await client(
-            client._get_api().channels.GetForumTopics(
-                channel=group,
-                offset_date=0,
-                offset_id=0,
-                offset_topic=0,
-                limit=100
-            )
-        )
-        for topic in result.topics:
-            topic_ids[topic.title] = topic.id
-        logger.info(f"✅ Загружено ID тем: {list(topic_ids.keys())}")
+        resp = requests.get(url, timeout=20)
+        if resp.status_code != 200:
+            return []
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        posts = []
+        for div in soup.find_all('div', class_='tgme_widget_message'):
+            text_div = div.find('div', class_='tgme_widget_message_text')
+            text = text_div.get_text() if text_div else ""
+            img_tag = div.find('img')
+            image_url = img_tag['src'] if img_tag else ""
+            if text or image_url:
+                posts.append({"text": text, "image": image_url})
+        logger.info(f"✅ Найдено {len(posts)} постов")
+        return posts
     except Exception as e:
-        logger.error(f"❌ Ошибка загрузки ID: {e}")
+        logger.error(f"Ошибка парсинга: {e}")
+        return []
 
-async def copy_posts():
-    global topic_ids
-    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
-    await client.connect()
-    logger.info("✅ Подключение через сессию установлено!")
-    
-    await load_topic_ids(client)
-    
-    try:
-        channel = await client.get_entity(SOURCE_CHANNEL)
-    except Exception as e:
-        logger.error(f"❌ Не удалось получить канал: {e}")
-        return
-
-    last_msg_id = 0
-    while True:
+def send_to_topic(topic_name, text, image_url):
+    if image_url:
+        url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
+        payload = {
+            "chat_id": TARGET_GROUP,
+            "photo": image_url,
+            "caption": f"📌 **{topic_name}**\n\n{text}",
+            "parse_mode": "Markdown"
+        }
         try:
-            history = await client(GetHistoryRequest(
-                peer=channel,
-                limit=10,
-                offset_date=0,
-                offset_id=0,
-                max_id=0,
-                min_id=0,
-                add_offset=0,
-                hash=0
-            ))
-            
-            for msg in reversed(history.messages):
-                if msg.id > last_msg_id and msg.message:
-                    text = msg.message
-                    topic = detect_topic(text)
-                    new_text = replace_mentions(text)
-                    
-                    thread_id = topic_ids.get(topic)
-                    if not thread_id:
-                        thread_id = topic_ids.get("Ассортимент")
-                    
-                    if thread_id:
-                        media_file = None
-                        if msg.media:
-                            try:
-                                media_file = await client.download_media(msg, file=io.BytesIO())
-                            except:
-                                pass
-                        
-                        if media_file:
-                            await client.send_file(
-                                TARGET_GROUP,
-                                file=media_file,
-                                caption=f"📌 **{topic}**\n\n{new_text}",
-                                message_thread_id=thread_id,
-                                parse_mode="markdown"
-                            )
-                        else:
-                            await client.send_message(
-                                TARGET_GROUP,
-                                f"📌 **{topic}**\n\n{new_text}",
-                                message_thread_id=thread_id
-                            )
-                        logger.info(f"📦 Отправлено в {topic} (ID: {thread_id}): {new_text[:50]}...")
-                    else:
-                        logger.error(f"❌ Нет ID для темы: {topic}")
-                    
-                    last_msg_id = msg.id
-                    time.sleep(2)
-            
-            logger.info("⏳ Ожидание 10 сек...")
-            time.sleep(10)
-        except Exception as e:
-            logger.error(f"❌ Ошибка цикла: {e}")
-            time.sleep(10)
+            requests.post(url, data=payload, timeout=15)
+            return
+        except:
+            pass
+    
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TARGET_GROUP,
+        "text": f"📌 **{topic_name}**\n\n{text}",
+        "parse_mode": "Markdown"
+    }
+    try:
+        requests.post(url, data=payload, timeout=15)
+    except:
+        pass
 
-async def main():
-    logger.info("🚀 Запуск с медиа и темами...")
-    await copy_posts()
+def main():
+    logger.info("🚀 Запуск парсера...")
+    posts = get_channel_posts()
+    if not posts:
+        return
+    for post in posts:
+        text = replace_mentions(post.get("text", ""))
+        topic = detect_topic(text)
+        image = post.get("image", "")
+        send_to_topic(topic, text, image)
+        logger.info(f"📦 Отправлено в {topic}")
+        time.sleep(3)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
