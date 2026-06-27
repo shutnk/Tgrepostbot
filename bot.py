@@ -3,7 +3,7 @@ import requests
 import time
 import re
 import logging
-from bs4 import BeautifulSoup
+import xml.etree.ElementTree as ET
 
 TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
 TARGET_GROUP = -1003991874844
@@ -123,29 +123,31 @@ def detect_topic(text):
 def replace_mentions(text):
     return re.sub(r'@\w+', MENTION_REPLACE, text)
 
-def get_channel_posts():
-    url = f"https://t.me/s/{SOURCE_CHANNEL}"
+def get_channel_posts_rss():
+    url = f"https://t.me/s/{SOURCE_CHANNEL}.rss"
     try:
         resp = requests.get(url, timeout=20)
         if resp.status_code != 200:
             return []
-        soup = BeautifulSoup(resp.text, 'html.parser')
+        root = ET.fromstring(resp.text)
         posts = []
-        # Ищем посты по новому стабильному классу
-        for wrap in soup.find_all('div', class_='tgme_widget_message_wrap'):
-            msg_div = wrap.find('div', class_='tgme_widget_message')
-            if not msg_div:
-                continue
-            text_div = msg_div.find('div', class_='tgme_widget_message_text')
-            text = text_div.get_text() if text_div else ""
-            img_tag = msg_div.find('img')
-            image_url = img_tag['src'] if img_tag else ""
-            if text or image_url:
-                posts.append({"text": text, "image": image_url})
-        logger.info(f"✅ Найдено {len(posts)} постов")
+        for item in root.findall('.//item'):
+            title = item.find('title')
+            desc = item.find('description')
+            title_text = title.text if title is not None else ""
+            desc_text = desc.text if desc is not None else ""
+            full_text = f"{title_text}\n\n{desc_text}"
+            image_url = ""
+            if desc_text:
+                img_match = re.search(r'<img[^>]+src="([^"]+)"', desc_text)
+                if img_match:
+                    image_url = img_match.group(1)
+            if full_text.strip():
+                posts.append({"text": full_text, "image": image_url})
+        logger.info(f"✅ RSS: Найдено {len(posts)} постов")
         return posts
     except Exception as e:
-        logger.error(f"Ошибка парсинга: {e}")
+        logger.error(f"Ошибка RSS: {e}")
         return []
 
 def send_to_topic(topic_name, text, image_url):
@@ -175,10 +177,10 @@ def send_to_topic(topic_name, text, image_url):
         pass
 
 def main():
-    logger.info("🚀 Запуск парсера...")
-    posts = get_channel_posts()
+    logger.info("🚀 Запуск RSS-парсера...")
+    posts = get_channel_posts_rss()
     if not posts:
-        logger.info("Постов не найдено.")
+        logger.info("Постов не найдено в RSS.")
         return
     for post in posts:
         text = replace_mentions(post.get("text", ""))
