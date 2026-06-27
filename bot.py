@@ -1,13 +1,18 @@
 import os
+import base64
+import asyncio
 import time
-import requests
 import re
 import logging
+from telethon import TelegramClient
+from telethon.tl.functions.messages import GetHistoryRequest
 
-TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
-TARGET_GROUP_ID = -1003991874844
-SOURCE_CHANNEL = "blvckrooom"
-RSS_URL = f"https://t.me/s/{SOURCE_CHANNEL}.rss"
+API_ID = 17349
+API_HASH = '344583e45741c457fe1862106095a5eb'
+SESSION_FILE = 'session.session'
+SOURCE_CHANNEL = '@blvckrooom'
+TARGET_GROUP = -1003991874844
+MENTION_REPLACE = '@esen_baevich'
 
 TOPIC_MAP = {
     "сумки hermes": "Сумки Hermes",
@@ -110,93 +115,51 @@ def detect_topic(text):
     return "Ассортимент"
 
 def replace_mentions(text):
-    return re.sub(r'@\w+', '@esen_baevich', text)
+    return re.sub(r'@\w+', MENTION_REPLACE, text)
 
-def get_channel_posts_rss_regex():
+async def copy_posts():
     try:
-        response = requests.get(RSS_URL, timeout=20)
-        if response.status_code != 200:
-            logger.error(f"RSS ошибка: код {response.status_code}")
-            return []
-        
-        raw_rss = response.text
-        posts = []
-        
-        # Разбиваем посты по <item>
-        items = re.findall(r'<item>(.*?)</item>', raw_rss, re.DOTALL)
-        
-        for item in items:
-            # Вытаскиваем заголовок
-            title_match = re.search(r'<title>(.*?)</title>', item, re.DOTALL)
-            title = title_match.group(1) if title_match else ""
-            
-            # Вытаскиваем описание
-            desc_match = re.search(r'<description>(.*?)</description>', item, re.DOTALL)
-            desc = desc_match.group(1) if desc_match else ""
-            
-            # Ссылка на картинку (если есть)
-            image_url = ""
-            if desc:
-                img_match = re.search(r'<img[^>]+src="([^"]+)"', desc)
-                if img_match:
-                    image_url = img_match.group(1)
-            
-            full_text = f"{title}\n\n{desc}"
-            if full_text.strip():
-                posts.append({
-                    "text": full_text,
-                    "image": image_url
-                })
-        
-        logger.info(f"✅ RSS (regex): Найдено {len(posts)} постов.")
-        return posts
+        with open('session.b64', 'r') as f:
+            b64_data = f.read().strip()
+        decoded = base64.b64decode(b64_data)
+        with open(SESSION_FILE, 'wb') as f:
+            f.write(decoded)
+        os.chmod(SESSION_FILE, 0o600)
+        logger.info("✅ Файл сессии создан из session.b64")
     except Exception as e:
-        logger.error(f"Ошибка RSS парсинга: {e}")
-        return []
-
-def send_to_topic(topic_name, text, image_url=None):
-    if image_url and image_url.startswith("http"):
-        url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
-        payload = {
-            "chat_id": TARGET_GROUP_ID,
-            "photo": image_url,
-            "caption": f"📌 **{topic_name}**\n\n{text}",
-            "parse_mode": "Markdown"
-        }
-        try:
-            requests.post(url, data=payload, timeout=15)
-            return
-        except:
-            pass
-    
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TARGET_GROUP_ID,
-        "text": f"📌 **{topic_name}**\n\n{text}",
-        "parse_mode": "Markdown"
-    }
-    try:
-        requests.post(url, data=payload, timeout=15)
-    except:
-        pass
-
-def main():
-    logger.info("🚀 Запуск парсинга RSS через regex...")
-    posts = get_channel_posts_rss_regex()
-    
-    if not posts:
-        logger.info("Постов не найдено в RSS.")
+        logger.error(f"❌ Ошибка чтения session.b64: {e}")
         return
+
+    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+    await client.connect()
+    logger.info("✅ Подключение через сессию установлено!")
     
-    for post in posts:
-        text = post.get("text", "")
-        image = post.get("image", "")
-        if text:
+    entity = await client.get_entity(SOURCE_CHANNEL)
+    history = await client(GetHistoryRequest(
+        peer=entity,
+        limit=50,
+        offset_date=0,
+        offset_id=0,
+        max_id=0,
+        min_id=0,
+        add_offset=0,
+        hash=0
+    ))
+    
+    for msg in history.messages:
+        if msg.message:
+            text = msg.message
             topic = detect_topic(text)
             new_text = replace_mentions(text)
-            send_to_topic(topic, new_text, image)
+            await client.send_message(TARGET_GROUP, f"📌 **{topic}**\n\n{new_text}")
             logger.info(f"📦 Отправлено в {topic}: {new_text[:50]}...")
-            time.sleep(3)
+            time.sleep(2)
+    
+    await client.disconnect()
+
+async def main():
+    logger.info("🚀 Запуск копирования...")
+    await copy_posts()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
