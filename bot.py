@@ -4,7 +4,7 @@ import re
 import logging
 import os
 import base64
-from telethon import TelegramClient
+from telethon import TelegramClient, functions
 from telethon.tl.functions.messages import GetHistoryRequest
 
 # ================================
@@ -162,9 +162,10 @@ async def copy_posts():
 
     try:
         group = await client.get_entity(TARGET_GROUP)
-        # === ФИНАЛЬНЫЙ РАБОЧИЙ ВЫЗОВ ===
-        GetForumTopicsMethod = client.__dict__['channels'].GetForumTopics
-        result = await client(GetForumTopicsMethod(
+        # =========================================================
+        # ПРАВИЛЬНЫЙ ВЫЗОВ ДЛЯ ТВОЕЙ ВЕРСИИ TELEHON
+        # =========================================================
+        result = await client(functions.channels.GetForumTopics(
             channel=group,
             offset_date=0,
             offset_id=0,
