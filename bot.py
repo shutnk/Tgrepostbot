@@ -1,10 +1,9 @@
-import asyncio
 import time
 import re
 import logging
 import os
 import base64
-from pyrogram import Client
+from pyrogram import Client, filters
 from pyrogram.types import Message
 from pyrogram.enums import ParseMode
 
@@ -119,9 +118,6 @@ TOPIC_MAP = {
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ================================
-# ФУНКЦИИ
-# ================================
 def detect_topic(text):
     if not text:
         return "Ассортимент"
@@ -134,7 +130,8 @@ def detect_topic(text):
 def replace_mentions(text):
     return re.sub(r'@\w+', MENTION_REPLACE, text)
 
-async def copy_posts():
+def copy_posts():
+    # Декодируем сессию
     if not os.path.exists(SESSION_B64_FILE):
         logger.error(f"❌ Файл {SESSION_B64_FILE} не найден!")
         return
@@ -148,28 +145,30 @@ async def copy_posts():
         logger.error(f"❌ Ошибка декодирования: {e}")
         return
 
+    # Создаём синхронный клиент
     client = Client("my_bot", session_string=session_string)
-    await client.start()
-    logger.info("✅ Клиент Pyrogram запущен!")
+    client.start()
+    logger.info("✅ Синхронный клиент Pyrogram запущен!")
     
     # Получаем ID канала и группы
-    source_id = await client.get_chat(SOURCE_CHANNEL)
-    target_id = await client.get_chat(TARGET_GROUP)
+    source_id = client.get_chat(SOURCE_CHANNEL)
+    target_id = client.get_chat(TARGET_GROUP)
     
     # Получаем список тем
     topics = {}
     try:
-        async for topic in client.get_forum_topics(target_id.id):
+        for topic in client.get_forum_topics(target_id.id):
             topics[topic.title] = topic.id
         logger.info(f"✅ Загружено ID тем: {list(topics.keys())}")
     except Exception as e:
         logger.error(f"❌ Ошибка загрузки тем: {e}")
+        client.stop()
         return
 
     last_msg_id = 0
     while True:
         try:
-            async for msg in client.get_chat_history(source_id.id, limit=5):
+            for msg in client.get_chat_history(source_id.id, limit=5):
                 if msg.id > last_msg_id and msg.text:
                     text = msg.text
                     topic = detect_topic(text)
@@ -182,7 +181,7 @@ async def copy_posts():
                     if thread_id:
                         if msg.photo or msg.document:
                             try:
-                                await client.send_photo(
+                                client.send_photo(
                                     target_id.id,
                                     photo=msg.photo.file_id if msg.photo else msg.document.file_id,
                                     caption=f"📌 **{topic}**\n\n{new_text}",
@@ -190,15 +189,14 @@ async def copy_posts():
                                     message_thread_id=thread_id
                                 )
                             except:
-                                # Если не получилось с фото, отправляем текст
-                                await client.send_message(
+                                client.send_message(
                                     target_id.id,
                                     f"📌 **{topic}**\n\n{new_text}",
                                     parse_mode=ParseMode.MARKDOWN,
                                     message_thread_id=thread_id
                                 )
                         else:
-                            await client.send_message(
+                            client.send_message(
                                 target_id.id,
                                 f"📌 **{topic}**\n\n{new_text}",
                                 parse_mode=ParseMode.MARKDOWN,
@@ -214,9 +212,9 @@ async def copy_posts():
             logger.error(f"❌ Ошибка цикла: {e}")
             time.sleep(10)
 
-async def main():
-    logger.info("🚀 Запуск Pyrogram бота...")
-    await copy_posts()
+def main():
+    logger.info("🚀 Запуск синхронного Pyrogram бота...")
+    copy_posts()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
