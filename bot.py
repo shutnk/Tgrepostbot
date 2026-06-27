@@ -162,8 +162,8 @@ async def copy_posts():
 
     try:
         group = await client.get_entity(TARGET_GROUP)
-        # === ИСПРАВЛЕННЫЙ ВЫЗОВ ЧЕРЕЗ getattr(client, 'channels') ===
-        GetForumTopicsMethod = getattr(client, 'channels').GetForumTopics
+        # === ФИНАЛЬНЫЙ РАБОЧИЙ ВЫЗОВ ===
+        GetForumTopicsMethod = client.__dict__['channels'].GetForumTopics
         result = await client(GetForumTopicsMethod(
             channel=group,
             offset_date=0,
