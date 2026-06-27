@@ -1,15 +1,26 @@
-import os
-import requests
+import asyncio
 import time
 import re
 import logging
+import os
+import base64
+from telethon import TelegramClient
+from telethon.tl.functions.messages import GetHistoryRequest
+from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument
 
-TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
+# ================================
+# НАСТРОЙКИ
+# ================================
+API_ID = 17349
+API_HASH = '344583e45741c457fe1862106095a5eb'
+SESSION_FILE = 'session.session'
+SOURCE_CHANNEL = '@blvckrooom'
 TARGET_GROUP = -1003991874844
-SOURCE_CHANNEL = "blvckrooom"
-
 MENTION_REPLACE = '@esen_baevich'
 
+# ================================
+# СЛОВАРЬ ТЕМ
+# ================================
 TOPIC_MAP = {
     "сумки hermes": "Сумки Hermes",
     "обувь hermes": "Обувь Hermes",
@@ -110,6 +121,9 @@ TOPIC_MAP = {
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ================================
+# ФУНКЦИИ
+# ================================
 def detect_topic(text):
     if not text:
         return "Ассортимент"
@@ -122,76 +136,98 @@ def detect_topic(text):
 def replace_mentions(text):
     return re.sub(r'@\w+', MENTION_REPLACE, text)
 
-def get_channel_posts_rss_regex():
-    url = f"https://t.me/s/{SOURCE_CHANNEL}.rss"
-    try:
-        resp = requests.get(url, timeout=20)
-        if resp.status_code != 200:
-            return []
-        raw = resp.text
-        posts = []
-        # Разбиваем посты по <item> через regex (это не ломается)
-        items = re.findall(r'<item>(.*?)</item>', raw, re.DOTALL)
-        for item in items:
-            title_match = re.search(r'<title>(.*?)</title>', item, re.DOTALL)
-            title = title_match.group(1) if title_match else ""
-            
-            desc_match = re.search(r'<description>(.*?)</description>', item, re.DOTALL)
-            desc = desc_match.group(1) if desc_match else ""
-            
-            full_text = f"{title}\n\n{desc}"
-            image_url = ""
-            if desc:
-                img_match = re.search(r'<img[^>]+src="([^"]+)"', desc)
-                if img_match:
-                    image_url = img_match.group(1)
-            if full_text.strip():
-                posts.append({"text": full_text, "image": image_url})
-        logger.info(f"✅ RSS (regex): Найдено {len(posts)} постов")
-        return posts
-    except Exception as e:
-        logger.error(f"Ошибка RSS парсинга: {e}")
-        return []
-
-def send_to_topic(topic_name, text, image_url):
-    if image_url:
-        url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
-        payload = {
-            "chat_id": TARGET_GROUP,
-            "photo": image_url,
-            "caption": f"📌 **{topic_name}**\n\n{text}",
-            "parse_mode": "Markdown"
-        }
-        try:
-            requests.post(url, data=payload, timeout=15)
-            return
-        except:
-            pass
-    
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TARGET_GROUP,
-        "text": f"📌 **{topic_name}**\n\n{text}",
-        "parse_mode": "Markdown"
-    }
-    try:
-        requests.post(url, data=payload, timeout=15)
-    except:
-        pass
-
-def main():
-    logger.info("🚀 Запуск RSS-парсера через regex...")
-    posts = get_channel_posts_rss_regex()
-    if not posts:
-        logger.info("Постов не найдено в RSS.")
+async def copy_posts():
+    # Проверяем, существует ли сессия
+    if not os.path.exists(SESSION_FILE):
+        logger.error(f"❌ Файл сессии {SESSION_FILE} не найден!")
         return
-    for post in posts:
-        text = replace_mentions(post.get("text", ""))
-        topic = detect_topic(text)
-        image = post.get("image", "")
-        send_to_topic(topic, text, image)
-        logger.info(f"📦 Отправлено в {topic}")
-        time.sleep(3)
+
+    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+    await client.connect()
+    logger.info("✅ Подключение через сессию установлено!")
+    
+    # Получаем сущность канала-источника
+    try:
+        channel = await client.get_entity(SOURCE_CHANNEL)
+    except Exception as e:
+        logger.error(f"❌ Не удалось получить канал {SOURCE_CHANNEL}: {e}")
+        return
+
+    # Получаем сущность группы и список тем
+    try:
+        group = await client.get_entity(TARGET_GROUP)
+        from telethon.tl.functions.channels import GetForumTopicsRequest
+        result = await client(GetForumTopicsRequest(
+            channel=group,
+            offset_date=0,
+            offset_id=0,
+            offset_topic=0,
+            limit=100
+        ))
+        topic_ids = {t.title: t.id for t in result.topics}
+        logger.info(f"✅ Загружено ID тем: {list(topic_ids.keys())}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка загрузки ID тем: {e}")
+        return
+
+    # Основной цикл копирования
+    last_msg_id = 0
+    while True:
+        try:
+            history = await client(GetHistoryRequest(
+                peer=channel,
+                limit=5,
+                offset_date=0,
+                offset_id=0,
+                max_id=0,
+                min_id=0,
+                add_offset=0,
+                hash=0
+            ))
+            
+            for msg in reversed(history.messages):
+                if msg.id > last_msg_id and msg.message:
+                    text = msg.message
+                    topic = detect_topic(text)
+                    new_text = replace_mentions(text)
+                    
+                    thread_id = topic_ids.get(topic)
+                    if not thread_id:
+                        thread_id = topic_ids.get("Ассортимент")
+                    
+                    if thread_id:
+                        if msg.media:
+                            try:
+                                await client.send_file(
+                                    TARGET_GROUP,
+                                    file=msg.media,
+                                    caption=f"📌 **{topic}**\n\n{new_text}",
+                                    message_thread_id=thread_id,
+                                    parse_mode="markdown"
+                                )
+                                logger.info(f"📦 Медиа отправлено в {topic}")
+                            except Exception as e:
+                                logger.error(f"⚠️ Ошибка отправки медиа в {topic}: {e}")
+                        else:
+                            await client.send_message(
+                                TARGET_GROUP,
+                                f"📌 **{topic}**\n\n{new_text}",
+                                message_thread_id=thread_id
+                            )
+                            logger.info(f"📦 Текст отправлен в {topic}")
+                        
+                        last_msg_id = msg.id
+                        time.sleep(2)
+            
+            logger.info("⏳ Ожидание новых постов (10 сек)...")
+            time.sleep(10)
+        except Exception as e:
+            logger.error(f"❌ Ошибка в цикле: {e}")
+            time.sleep(10)
+
+async def main():
+    logger.info("🚀 Запуск финального копирования...")
+    await copy_posts()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
