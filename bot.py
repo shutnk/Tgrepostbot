@@ -99,7 +99,17 @@ TOPIC_MAP = {
     "alexander wang": "alexander wang",
     "enfants riches deprimes": "ENFANTS RICHES DEPRIMES",
     "ювелирные украшения": "Ювелирные украшения",
-    "сумки moynat paris": "Сумки MOYNAT PARIS"
+    "сумки moynat paris": "Сумки MOYNAT PARIS",
+    
+    # ===== ДОБАВЛЕННЫЕ КЛЮЧЕВЫЕ СЛОВА =====
+    "браслет": "Ювелирные украшения",
+    "серьги": "Ювелирные украшения",
+    "колье": "Ювелирные украшения",
+    "подвеска": "Ювелирные украшения",
+    "vivienne westwood": "Аксессуары",
+    "кольцо": "Ювелирные украшения",
+    "цепи": "Ювелирные украшения",
+    "украшения": "Ювелирные украшения",
 }
 
 logging.basicConfig(level=logging.INFO)
@@ -134,7 +144,12 @@ async def copy_posts():
     await client.connect()
     logger.info("✅ Подключение через сессию установлено!")
     
-    entity = await client.get_entity(SOURCE_CHANNEL)
+    try:
+        entity = await client.get_entity(SOURCE_CHANNEL)
+    except Exception as e:
+        logger.error(f"❌ Не удалось получить канал {SOURCE_CHANNEL}: {e}")
+        return
+
     history = await client(GetHistoryRequest(
         peer=entity,
         limit=50,
