@@ -6,7 +6,7 @@ import os
 import base64
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
-from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument
+from telethon.tl.functions.channels import GetForumTopicsRequest
 
 # ================================
 # НАСТРОЙКИ
@@ -14,6 +14,7 @@ from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument
 API_ID = 17349
 API_HASH = '344583e45741c457fe1862106095a5eb'
 SESSION_FILE = 'session.session'
+SESSION_B64_FILE = 'session.b64'
 SOURCE_CHANNEL = '@blvckrooom'
 TARGET_GROUP = -1003991874844
 MENTION_REPLACE = '@esen_baevich'
@@ -137,9 +138,21 @@ def replace_mentions(text):
     return re.sub(r'@\w+', MENTION_REPLACE, text)
 
 async def copy_posts():
-    # Проверяем, существует ли сессия
-    if not os.path.exists(SESSION_FILE):
-        logger.error(f"❌ Файл сессии {SESSION_FILE} не найден!")
+    # === Создаём файл сессии из .b64 ===
+    if not os.path.exists(SESSION_B64_FILE):
+        logger.error(f"❌ Файл {SESSION_B64_FILE} не найден!")
+        return
+
+    try:
+        with open(SESSION_B64_FILE, 'r') as f:
+            b64_data = f.read().strip()
+        decoded = base64.b64decode(b64_data)
+        with open(SESSION_FILE, 'wb') as f:
+            f.write(decoded)
+        os.chmod(SESSION_FILE, 0o600)
+        logger.info("✅ Файл сессии создан из session.b64")
+    except Exception as e:
+        logger.error(f"❌ Ошибка декодирования сессии: {e}")
         return
 
     client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
@@ -156,7 +169,6 @@ async def copy_posts():
     # Получаем сущность группы и список тем
     try:
         group = await client.get_entity(TARGET_GROUP)
-        from telethon.tl.functions.channels import GetForumTopicsRequest
         result = await client(GetForumTopicsRequest(
             channel=group,
             offset_date=0,
