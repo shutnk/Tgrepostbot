@@ -131,10 +131,14 @@ def get_channel_posts():
             return []
         soup = BeautifulSoup(resp.text, 'html.parser')
         posts = []
-        for div in soup.find_all('div', class_='tgme_widget_message'):
-            text_div = div.find('div', class_='tgme_widget_message_text')
+        # Ищем посты по новому стабильному классу
+        for wrap in soup.find_all('div', class_='tgme_widget_message_wrap'):
+            msg_div = wrap.find('div', class_='tgme_widget_message')
+            if not msg_div:
+                continue
+            text_div = msg_div.find('div', class_='tgme_widget_message_text')
             text = text_div.get_text() if text_div else ""
-            img_tag = div.find('img')
+            img_tag = msg_div.find('img')
             image_url = img_tag['src'] if img_tag else ""
             if text or image_url:
                 posts.append({"text": text, "image": image_url})
@@ -174,6 +178,7 @@ def main():
     logger.info("🚀 Запуск парсера...")
     posts = get_channel_posts()
     if not posts:
+        logger.info("Постов не найдено.")
         return
     for post in posts:
         text = replace_mentions(post.get("text", ""))
