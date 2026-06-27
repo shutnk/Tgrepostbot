@@ -7,7 +7,6 @@ import logging
 import io
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
-from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument
 
 API_ID = 17349
 API_HASH = '344583e45741c457fe1862106095a5eb'
@@ -16,7 +15,6 @@ SOURCE_CHANNEL = '@blvckrooom'
 TARGET_GROUP = -1003991874844
 MENTION_REPLACE = '@esen_baevich'
 
-# === СЛОВАРЬ ТЕМ ===
 TOPIC_MAP = {
     "сумки hermes": "Сумки Hermes",
     "обувь hermes": "Обувь Hermes",
@@ -135,7 +133,6 @@ async def load_topic_ids(client):
     global topic_ids
     try:
         group = await client.get_entity(TARGET_GROUP)
-        # Прямой вызов API вместо импорта
         result = await client(
             client._get_api().channels.GetForumTopics(
                 channel=group,
@@ -190,7 +187,6 @@ async def copy_posts():
                         thread_id = topic_ids.get("Ассортимент")
                     
                     if thread_id:
-                        # Скачиваем медиа, если есть
                         media_file = None
                         if msg.media:
                             try:
@@ -199,7 +195,6 @@ async def copy_posts():
                                 pass
                         
                         if media_file:
-                            # Отправляем с фото/видео
                             await client.send_file(
                                 TARGET_GROUP,
                                 file=media_file,
@@ -208,7 +203,6 @@ async def copy_posts():
                                 parse_mode="markdown"
                             )
                         else:
-                            # Отправляем только текст
                             await client.send_message(
                                 TARGET_GROUP,
                                 f"📌 **{topic}**\n\n{new_text}",
