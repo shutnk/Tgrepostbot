@@ -1,15 +1,18 @@
+import asyncio
 import time
 import re
 import logging
 import os
 import base64
-from pyrogram import Client, filters
-from pyrogram.types import Message
-from pyrogram.enums import ParseMode
+from telethon import TelegramClient
+from telethon.tl.functions.messages import GetHistoryRequest
 
 # ================================
 # НАСТРОЙКИ
 # ================================
+API_ID = 17349
+API_HASH = '344583e45741c457fe1862106095a5eb'
+SESSION_FILE = 'session.session'
 SESSION_B64_FILE = 'session.b64'
 SOURCE_CHANNEL = '@blvckrooom'
 TARGET_GROUP = -1003991874844
@@ -130,7 +133,7 @@ def detect_topic(text):
 def replace_mentions(text):
     return re.sub(r'@\w+', MENTION_REPLACE, text)
 
-def copy_posts():
+async def copy_posts():
     # Декодируем сессию
     if not os.path.exists(SESSION_B64_FILE):
         logger.error(f"❌ Файл {SESSION_B64_FILE} не найден!")
@@ -139,67 +142,88 @@ def copy_posts():
     try:
         with open(SESSION_B64_FILE, 'r') as f:
             b64_data = f.read().strip()
-        session_string = base64.b64decode(b64_data).decode('utf-8')
-        logger.info("✅ Сессия декодирована из .b64")
+        decoded = base64.b64decode(b64_data)
+        with open(SESSION_FILE, 'wb') as f:
+            f.write(decoded)
+        os.chmod(SESSION_FILE, 0o600)
+        logger.info("✅ Файл сессии создан из session.b64")
     except Exception as e:
         logger.error(f"❌ Ошибка декодирования: {e}")
         return
 
-    # Создаём синхронный клиент
-    client = Client("my_bot", session_string=session_string)
-    client.start()
-    logger.info("✅ Синхронный клиент Pyrogram запущен!")
+    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+    await client.connect()
+    logger.info("✅ Подключение через сессию установлено!")
     
-    # Получаем ID канала и группы
-    source_id = client.get_chat(SOURCE_CHANNEL)
-    target_id = client.get_chat(TARGET_GROUP)
-    
-    # Получаем список тем
-    topics = {}
+    # Получаем канал-источник
     try:
-        for topic in client.get_forum_topics(target_id.id):
-            topics[topic.title] = topic.id
-        logger.info(f"✅ Загружено ID тем: {list(topics.keys())}")
+        channel = await client.get_entity(SOURCE_CHANNEL)
     except Exception as e:
-        logger.error(f"❌ Ошибка загрузки тем: {e}")
-        client.stop()
+        logger.error(f"❌ Не удалось получить канал: {e}")
+        return
+
+    # Получаем группу и список тем (через динамический вызов)
+    try:
+        group = await client.get_entity(TARGET_GROUP)
+        # ВЫЗОВ БЕЗ ИМПОРТА: используем client.__class__.__dict__
+        GetForumTopics = client.__class__.__dict__['channels'].GetForumTopics
+        result = await client(GetForumTopics(
+            channel=group,
+            offset_date=0,
+            offset_id=0,
+            offset_topic=0,
+            limit=100
+        ))
+        topic_ids = {t.title: t.id for t in result.topics}
+        logger.info(f"✅ Загружено ID тем: {list(topic_ids.keys())}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка загрузки ID тем: {e}")
         return
 
     last_msg_id = 0
     while True:
         try:
-            for msg in client.get_chat_history(source_id.id, limit=5):
-                if msg.id > last_msg_id and msg.text:
-                    text = msg.text
+            history = await client(GetHistoryRequest(
+                peer=channel,
+                limit=5,
+                offset_date=0,
+                offset_id=0,
+                max_id=0,
+                min_id=0,
+                add_offset=0,
+                hash=0
+            ))
+            
+            for msg in reversed(history.messages):
+                if msg.id > last_msg_id and msg.message:
+                    text = msg.message
                     topic = detect_topic(text)
                     new_text = replace_mentions(text)
                     
-                    thread_id = topics.get(topic)
+                    thread_id = topic_ids.get(topic)
                     if not thread_id:
-                        thread_id = topics.get("Ассортимент")
+                        thread_id = topic_ids.get("Ассортимент")
                     
                     if thread_id:
-                        if msg.photo or msg.document:
+                        if msg.media:
                             try:
-                                client.send_photo(
-                                    target_id.id,
-                                    photo=msg.photo.file_id if msg.photo else msg.document.file_id,
+                                await client.send_file(
+                                    TARGET_GROUP,
+                                    file=msg.media,
                                     caption=f"📌 **{topic}**\n\n{new_text}",
-                                    parse_mode=ParseMode.MARKDOWN,
-                                    message_thread_id=thread_id
+                                    message_thread_id=thread_id,
+                                    parse_mode="markdown"
                                 )
                             except:
-                                client.send_message(
-                                    target_id.id,
+                                await client.send_message(
+                                    TARGET_GROUP,
                                     f"📌 **{topic}**\n\n{new_text}",
-                                    parse_mode=ParseMode.MARKDOWN,
                                     message_thread_id=thread_id
                                 )
                         else:
-                            client.send_message(
-                                target_id.id,
+                            await client.send_message(
+                                TARGET_GROUP,
                                 f"📌 **{topic}**\n\n{new_text}",
-                                parse_mode=ParseMode.MARKDOWN,
                                 message_thread_id=thread_id
                             )
                         logger.info(f"📦 Отправлено в {topic}")
@@ -207,14 +231,14 @@ def copy_posts():
                         time.sleep(2)
             
             logger.info("⏳ Ожидание 10 сек...")
-            time.sleep(10)
+            await asyncio.sleep(10)
         except Exception as e:
             logger.error(f"❌ Ошибка цикла: {e}")
-            time.sleep(10)
+            await asyncio.sleep(10)
 
-def main():
-    logger.info("🚀 Запуск синхронного Pyrogram бота...")
-    copy_posts()
+async def main():
+    logger.info("🚀 Запуск финального копирования...")
+    await copy_posts()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
