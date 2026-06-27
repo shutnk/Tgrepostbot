@@ -4,7 +4,7 @@ import re
 import logging
 import os
 import base64
-from telethon import TelegramClient
+from telethon import TelegramClient, functions
 from telethon.tl.functions.messages import GetHistoryRequest
 
 # ================================
@@ -134,7 +134,6 @@ def replace_mentions(text):
     return re.sub(r'@\w+', MENTION_REPLACE, text)
 
 async def copy_posts():
-    # Декодируем сессию
     if not os.path.exists(SESSION_B64_FILE):
         logger.error(f"❌ Файл {SESSION_B64_FILE} не найден!")
         return
@@ -155,25 +154,24 @@ async def copy_posts():
     await client.connect()
     logger.info("✅ Подключение через сессию установлено!")
     
-    # Получаем канал-источник
     try:
         channel = await client.get_entity(SOURCE_CHANNEL)
     except Exception as e:
         logger.error(f"❌ Не удалось получить канал: {e}")
         return
 
-    # Получаем группу и список тем (через динамический вызов)
     try:
         group = await client.get_entity(TARGET_GROUP)
-        # ВЫЗОВ БЕЗ ИМПОРТА: используем client.__class__.__dict__
-        GetForumTopics = client.__class__.__dict__['channels'].GetForumTopics
-        result = await client(GetForumTopics(
-            channel=group,
-            offset_date=0,
-            offset_id=0,
-            offset_topic=0,
-            limit=100
-        ))
+        # === ИСПРАВЛЕННЫЙ ВЫЗОВ (без __dict__, через functions) ===
+        result = await client(
+            functions.channels.GetForumTopics(
+                channel=group,
+                offset_date=0,
+                offset_id=0,
+                offset_topic=0,
+                limit=100
+            )
+        )
         topic_ids = {t.title: t.id for t in result.topics}
         logger.info(f"✅ Загружено ID тем: {list(topic_ids.keys())}")
     except Exception as e:
