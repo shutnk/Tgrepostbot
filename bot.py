@@ -1,26 +1,17 @@
+import os
 import time
+import requests
 import re
 import logging
-import os
-import base64
-import threading
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from bs4 import BeautifulSoup
 
-# Создаём цикл событий в отдельном потоке до импорта Pyrogram
-import asyncio
-from pyrogram import Client
-from pyrogram.enums import ParseMode
-
-# ================================
-# НАСТРОЙКИ
-# ================================
-SESSION_B64_FILE = 'session.b64'
-SOURCE_CHANNEL = '@blvckrooom'
+TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
 TARGET_GROUP = -1003991874844
+SOURCE_URL = "https://t.me/s/blvckrooom"
 MENTION_REPLACE = '@esen_baevich'
 
-# ================================
-# СЛОВАРЬ ТЕМ
-# ================================
 TOPIC_MAP = {
     "сумки hermes": "Сумки Hermes",
     "обувь hermes": "Обувь Hermes",
@@ -133,87 +124,69 @@ def detect_topic(text):
 def replace_mentions(text):
     return re.sub(r'@\w+', MENTION_REPLACE, text)
 
-def run_pyrogram():
-    if not os.path.exists(SESSION_B64_FILE):
-        logger.error(f"❌ Файл {SESSION_B64_FILE} не найден!")
-        return
-
+def get_posts_selenium():
+    options = Options()
+    options.add_argument("--headless")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    driver = webdriver.Chrome(options=options)
+    posts = []
     try:
-        with open(SESSION_B64_FILE, 'r') as f:
-            b64_data = f.read().strip()
-        session_string = base64.b64decode(b64_data).decode('utf-8')
-        logger.info("✅ Сессия декодирована из .b64")
+        driver.get(SOURCE_URL)
+        time.sleep(5)
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        for div in soup.find_all('div', class_='tgme_widget_message'):
+            text_div = div.find('div', class_='tgme_widget_message_text')
+            text = text_div.get_text() if text_div else ""
+            img_tag = div.find('img')
+            image_url = img_tag['src'] if img_tag else ""
+            if text or image_url:
+                posts.append({"text": text, "image": image_url})
+        logger.info(f"✅ Selenium: Найдено {len(posts)} постов")
     except Exception as e:
-        logger.error(f"❌ Ошибка декодирования: {e}")
-        return
+        logger.error(f"❌ Ошибка Selenium: {e}")
+    finally:
+        driver.quit()
+    return posts
 
-    client = Client("my_bot", session_string=session_string)
-    client.start()
-    logger.info("✅ Клиент Pyrogram запущен!")
-    
-    source_id = client.get_chat(SOURCE_CHANNEL)
-    target_id = client.get_chat(TARGET_GROUP)
-    
-    topics = {}
-    try:
-        for topic in client.get_forum_topics(target_id.id):
-            topics[topic.title] = topic.id
-        logger.info(f"✅ Загружено ID тем: {list(topics.keys())}")
-    except Exception as e:
-        logger.error(f"❌ Ошибка загрузки тем: {e}")
-        client.stop()
-        return
-
-    last_msg_id = 0
-    while True:
+def send_to_topic(topic_name, text, image_url):
+    if image_url:
+        url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
+        payload = {
+            "chat_id": TARGET_GROUP,
+            "photo": image_url,
+            "caption": f"📌 **{topic_name}**\n\n{text}",
+            "parse_mode": "Markdown"
+        }
         try:
-            for msg in client.get_chat_history(source_id.id, limit=5):
-                if msg.id > last_msg_id and msg.text:
-                    text = msg.text
-                    topic = detect_topic(text)
-                    new_text = replace_mentions(text)
-                    
-                    thread_id = topics.get(topic)
-                    if not thread_id:
-                        thread_id = topics.get("Ассортимент")
-                    
-                    if thread_id:
-                        if msg.photo or msg.document:
-                            try:
-                                client.send_photo(
-                                    target_id.id,
-                                    photo=msg.photo.file_id if msg.photo else msg.document.file_id,
-                                    caption=f"📌 **{topic}**\n\n{new_text}",
-                                    parse_mode=ParseMode.MARKDOWN,
-                                    message_thread_id=thread_id
-                                )
-                            except:
-                                client.send_message(
-                                    target_id.id,
-                                    f"📌 **{topic}**\n\n{new_text}",
-                                    parse_mode=ParseMode.MARKDOWN,
-                                    message_thread_id=thread_id
-                                )
-                        else:
-                            client.send_message(
-                                target_id.id,
-                                f"📌 **{topic}**\n\n{new_text}",
-                                parse_mode=ParseMode.MARKDOWN,
-                                message_thread_id=thread_id
-                            )
-                        logger.info(f"📦 Отправлено в {topic}")
-                        last_msg_id = msg.id
-                        time.sleep(2)
-            
-            logger.info("⏳ Ожидание 10 сек...")
-            time.sleep(10)
-        except Exception as e:
-            logger.error(f"❌ Ошибка цикла: {e}")
-            time.sleep(10)
+            requests.post(url, data=payload, timeout=15)
+            return
+        except:
+            pass
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TARGET_GROUP,
+        "text": f"📌 **{topic_name}**\n\n{text}",
+        "parse_mode": "Markdown"
+    }
+    try:
+        requests.post(url, data=payload, timeout=15)
+    except:
+        pass
 
 def main():
-    logger.info("🚀 Запуск финального Pyrogram бота...")
-    run_pyrogram()
+    logger.info("🚀 Запуск Selenium парсера...")
+    posts = get_posts_selenium()
+    if not posts:
+        logger.info("Постов не найдено.")
+        return
+    for post in posts:
+        text = replace_mentions(post.get("text", ""))
+        topic = detect_topic(text)
+        image = post.get("image", "")
+        send_to_topic(topic, text, image)
+        logger.info(f"📦 Отправлено в {topic}")
+        time.sleep(3)
 
 if __name__ == "__main__":
     main()
