@@ -6,6 +6,7 @@ import os
 import base64
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
+from telethon.tl import API
 
 # ================================
 # НАСТРОЙКИ
@@ -165,18 +166,17 @@ async def copy_posts():
         logger.error(f"❌ Не удалось получить канал {SOURCE_CHANNEL}: {e}")
         return
 
-    # Получаем сущность группы и список тем (исправленный вызов)
+    # Получаем сущность группы и список тем (исправленный вызов через API)
     try:
         group = await client.get_entity(TARGET_GROUP)
-        result = await client(
-            client.__class__.__dict__['channels'].GetForumTopics(
-                channel=group,
-                offset_date=0,
-                offset_id=0,
-                offset_topic=0,
-                limit=100
-            )
-        )
+        # ИСПОЛЬЗУЕМ API, А НЕ client.__dict__
+        result = await client(API.channels.GetForumTopics(
+            channel=group,
+            offset_date=0,
+            offset_id=0,
+            offset_topic=0,
+            limit=100
+        ))
         topic_ids = {t.title: t.id for t in result.topics}
         logger.info(f"✅ Загружено ID тем: {list(topic_ids.keys())}")
     except Exception as e:
