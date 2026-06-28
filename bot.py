@@ -112,7 +112,7 @@ def replace_mentions(text):
 
 def main():
     offset = 0
-    logger.info("🚀 Запуск бота-приёмника (жду форварды в ЛС)...")
+    logger.info("🚀 Запуск бота-приёмника (с поддержкой фото)...")
     while True:
         try:
             url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={offset}&timeout=30"
@@ -123,9 +123,19 @@ def main():
             for update in data.get("result", []):
                 offset = update["update_id"] + 1
                 msg = update.get("message")
-                if not msg or "text" not in msg:
+                if not msg:
                     continue
-                text = msg["text"]
+                
+                # ===== ПОДДЕРЖКА МЕДИА И ТЕКСТА =====
+                text = ""
+                if "caption" in msg:
+                    text = msg["caption"]
+                elif "text" in msg:
+                    text = msg["text"]
+                
+                if not text:
+                    continue
+                
                 topic = detect_topic(text)
                 new_text = replace_mentions(text)
                 
