@@ -112,6 +112,9 @@ def detect_topic(text):
 def replace_mentions(text):
     return re.sub(r'@\w+', MENTION_REPLACE, text)
 
+# === ОБРАБОТКА МЕДИА-ГРУПП (АЛЬБОМОВ) ===
+media_groups = {}
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
     try:
@@ -123,6 +126,45 @@ def webhook():
         if not msg:
             return jsonify({"status": "ok"}), 200
 
+        # Если есть media_group_id — это альбом
+        media_group_id = msg.get("media_group_id")
+        if media_group_id:
+            if media_group_id not in media_groups:
+                media_groups[media_group_id] = {"photos": [], "caption": ""}
+            # Сохраняем фото
+            if "photo" in msg:
+                photo_list = msg["photo"]
+                if photo_list:
+                    media_groups[media_group_id]["photos"].append(photo_list[-1]["file_id"])
+            # Сохраняем подпись (она обычно только в первом или последнем сообщении)
+            if "caption" in msg:
+                media_groups[media_group_id]["caption"] = msg["caption"]
+            
+            # Если набралось 9 фото (или прошло время) — отправляем
+            if len(media_groups[media_group_id]["photos"]) >= 9:
+                caption = media_groups[media_group_id]["caption"]
+                new_text = replace_mentions(caption)
+                topic = detect_topic(new_text)
+                
+                media_group_id_clean = media_group_id
+                media_groups.pop(media_group_id_clean)
+
+                # Отправляем альбом
+                url = f"https://api.telegram.org/bot{TOKEN}/sendMediaGroup"
+                media = [{"type": "photo", "media": pid} for pid in media_groups[media_group_id_clean]["photos"]]
+                payload = {
+                    "chat_id": TARGET_GROUP,
+                    "media": media
+                }
+                # Если есть подпись, добавляем её к первому фото
+                if caption:
+                    media[0]["caption"] = f"📌 **{topic}**\n\n{new_text}"
+                    media[0]["parse_mode"] = "Markdown"
+                requests.post(url, json=payload)
+                logger.info(f"📚 Альбом отправлен в {topic} ({len(media)} фото)")
+            return jsonify({"status": "ok"}), 200
+
+        # Обычное одиночное фото
         text = ""
         photo_url = None
 
@@ -152,7 +194,7 @@ def webhook():
                 "parse_mode": "Markdown"
             }
             requests.post(url, data=payload)
-            logger.info(f"📸 Фото отправлено в {topic}")
+            logger.info(f"📸 Одиночное фото отправлено в {topic}")
         else:
             url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
             payload = {
