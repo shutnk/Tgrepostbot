@@ -128,7 +128,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
             return
 
         content_length = int(self.headers['Content-Length'])
-        post_data = self.rfile.read(content_length)
+        post_data = self.rfile.read(content_length).decode('utf-8')  # <-- ДОБАВЛЕНА ДЕКОДИРОВКА
         
         try:
             update = json.loads(post_data)
