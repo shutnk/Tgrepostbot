@@ -1,14 +1,19 @@
+import asyncio
 import time
 import re
 import logging
-import json
-import requests
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import os
+import base64
+from telethon import TelegramClient
+from telethon.tl.functions.messages import GetHistoryRequest
 
-TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
+API_ID = 17349
+API_HASH = '344583e45741c457fe1862106095a5eb'
+SESSION_FILE = 'session.session'
+SESSION_B64_FILE = 'session.b64'
+SOURCE_CHANNEL = '@blvckrooom'
 TARGET_GROUP = -1003991874844
 MENTION_REPLACE = '@esen_baevich'
-RENDER_EXTERNAL_URL = "https://tgrepostbot.onrender.com"
 
 TOPIC_MAP = {
     "сумки hermes": "Сумки Hermes",
@@ -113,130 +118,71 @@ def detect_topic(text):
 def replace_mentions(text):
     return re.sub(r'@\w+', MENTION_REPLACE, text)
 
-album_buffer = {}
+async def copy_posts():
+    if not os.path.exists(SESSION_B64_FILE):
+        logger.error(f"❌ Файл {SESSION_B64_FILE} не найден!")
+        return
 
-class WebhookHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is running!")
-
-    def do_POST(self):
-        if self.path != "/webhook":
-            self.send_response(404)
-            self.end_headers()
-            return
-
-        content_length = int(self.headers['Content-Length'])
-        post_data = self.rfile.read(content_length)  # БЕЗ ДЕКОДИРОВКИ
-        
-        try:
-            update = json.loads(post_data)
-        except Exception as e:
-            logger.error(f"❌ Ошибка JSON: {e}")
-            self.send_response(200)
-            self.end_headers()
-            return
-
-        msg = update.get("message")
-        if not msg:
-            self.send_response(200)
-            self.end_headers()
-            return
-
-        group_id = msg.get("media_group_id")
-        
-        if group_id:
-            if group_id not in album_buffer:
-                album_buffer[group_id] = {"photos": [], "caption": "", "timestamp": time.time()}
-            
-            if "photo" in msg:
-                album_buffer[group_id]["photos"].append(msg["photo"][-1]["file_id"])
-            
-            if "caption" in msg:
-                album_buffer[group_id]["caption"] = msg["caption"]
-            
-            if time.time() - album_buffer[group_id]["timestamp"] > 2:
-                caption = album_buffer[group_id]["caption"]
-                new_text = replace_mentions(caption)
-                topic = detect_topic(new_text)
-                photos = album_buffer[group_id]["photos"]
-                del album_buffer[group_id]
-                
-                url = f"https://api.telegram.org/bot{TOKEN}/sendMediaGroup"
-                media = [{"type": "photo", "media": p} for p in photos]
-                if caption:
-                    media[0]["caption"] = f"📌 **{topic}**\n\n{new_text}"
-                    media[0]["parse_mode"] = "Markdown"
-                requests.post(url, json={"chat_id": TARGET_GROUP, "media": media})
-                logger.info(f"📚 Альбом ({len(photos)} фото) отправлен в {topic}")
-                self.send_response(200)
-                self.end_headers()
-                return
-            
-            self.send_response(200)
-            self.end_headers()
-            return
-
-        text = ""
-        photo_url = None
-
-        if "photo" in msg:
-            photo_list = msg["photo"]
-            if photo_list:
-                photo_url = photo_list[-1]["file_id"]
-            if "caption" in msg:
-                text = msg["caption"]
-        elif "text" in msg:
-            text = msg["text"]
-        elif "caption" in msg:
-            text = msg["caption"]
-
-        if not text and not photo_url:
-            self.send_response(200)
-            self.end_headers()
-            return
-
-        new_text = replace_mentions(text)
-        topic = detect_topic(new_text)
-
-        if photo_url:
-            url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
-            payload = {
-                "chat_id": TARGET_GROUP,
-                "photo": photo_url,
-                "caption": f"📌 **{topic}**\n\n{new_text}",
-                "parse_mode": "Markdown"
-            }
-            requests.post(url, data=payload)
-            logger.info(f"📸 Одиночное фото отправлено в {topic}")
-        else:
-            url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-            payload = {
-                "chat_id": TARGET_GROUP,
-                "text": f"📌 **{topic}**\n\n{new_text}",
-                "parse_mode": "Markdown"
-            }
-            requests.post(url, data=payload)
-            logger.info(f"📝 Текст отправлен в {topic}")
-
-        self.send_response(200)
-        self.end_headers()
-
-def setup_webhook():
-    webhook_url = f"{RENDER_EXTERNAL_URL}/webhook"
-    url = f"https://api.telegram.org/bot{TOKEN}/setWebhook?url={webhook_url}"
     try:
-        resp = requests.get(url, timeout=15)
-        if resp.json().get("ok"):
-            logger.info(f"✅ Webhook установлен на: {webhook_url}")
-        else:
-            logger.error(f"❌ Ошибка установки Webhook: {resp.text}")
+        with open(SESSION_B64_FILE, 'r') as f:
+            b64_data = f.read().strip()
+        decoded = base64.b64decode(b64_data)
+        with open(SESSION_FILE, 'wb') as f:
+            f.write(decoded)
+        os.chmod(SESSION_FILE, 0o600)
+        logger.info("✅ Сессия загружена из .b64")
     except Exception as e:
-        logger.error(f"❌ Ошибка подключения к Telegram: {e}")
+        logger.error(f"❌ Ошибка декодирования: {e}")
+        return
+
+    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+    await client.connect()
+    logger.info("✅ Подключение через сессию установлено!")
+    
+    try:
+        channel = await client.get_entity(SOURCE_CHANNEL)
+    except Exception as e:
+        logger.error(f"❌ Не удалось получить канал: {e}")
+        return
+
+    last_msg_id = 0
+    while True:
+        try:
+            history = await client(GetHistoryRequest(
+                peer=channel,
+                limit=5,
+                offset_date=0,
+                offset_id=0,
+                max_id=0,
+                min_id=0,
+                add_offset=0,
+                hash=0
+            ))
+            
+            for msg in reversed(history.messages):
+                if msg.id > last_msg_id and msg.message:
+                    text = msg.message
+                    topic = detect_topic(text)
+                    new_text = replace_mentions(text)
+                    
+                    # Отправляем в группу (без указания темы, так как нет ID)
+                    await client.send_message(
+                        TARGET_GROUP,
+                        f"📌 **{topic}**\n\n{new_text}"
+                    )
+                    logger.info(f"📦 Отправлено в {topic}")
+                    last_msg_id = msg.id
+                    time.sleep(2)
+            
+            logger.info("⏳ Ожидание 10 сек...")
+            await asyncio.sleep(10)
+        except Exception as e:
+            logger.error(f"❌ Ошибка цикла: {e}")
+            await asyncio.sleep(10)
+
+async def main():
+    logger.info("🚀 Запуск финального копирования...")
+    await copy_posts()
 
 if __name__ == "__main__":
-    setup_webhook()
-    server = HTTPServer(("0.0.0.0", 10000), WebhookHandler)
-    logger.info("🚀 Сервер запущен на порту 10000")
-    server.serve_forever()
+    asyncio.run(main())
