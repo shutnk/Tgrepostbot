@@ -148,7 +148,6 @@ async def copy_posts():
     last_msg_id = 0
     while True:
         try:
-            # ЗАМЕНА: берём 100 сообщений за раз, чтобы охватить всё
             history = await client(GetHistoryRequest(
                 peer=channel,
                 limit=100,
