@@ -112,8 +112,8 @@ def detect_topic(text):
 def replace_mentions(text):
     return re.sub(r'@\w+', MENTION_REPLACE, text)
 
-# === ОБРАБОТКА МЕДИА-ГРУПП (АЛЬБОМОВ) ===
-media_groups = {}
+# === БУФЕР ДЛЯ АЛЬБОМОВ ===
+album_buffer = {}
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -126,45 +126,61 @@ def webhook():
         if not msg:
             return jsonify({"status": "ok"}), 200
 
-        # Если есть media_group_id — это альбом
-        media_group_id = msg.get("media_group_id")
-        if media_group_id:
-            if media_group_id not in media_groups:
-                media_groups[media_group_id] = {"photos": [], "caption": ""}
-            # Сохраняем фото
-            if "photo" in msg:
-                photo_list = msg["photo"]
-                if photo_list:
-                    media_groups[media_group_id]["photos"].append(photo_list[-1]["file_id"])
-            # Сохраняем подпись (она обычно только в первом или последнем сообщении)
-            if "caption" in msg:
-                media_groups[media_group_id]["caption"] = msg["caption"]
+        # Получаем media_group_id
+        group_id = msg.get("media_group_id")
+        
+        # Если это альбом
+        if group_id:
+            if group_id not in album_buffer:
+                album_buffer[group_id] = {"photos": [], "caption": "", "timestamp": time.time()}
             
-            # Если набралось 9 фото (или прошло время) — отправляем
-            if len(media_groups[media_group_id]["photos"]) >= 9:
-                caption = media_groups[media_group_id]["caption"]
+            # Добавляем фото
+            if "photo" in msg:
+                album_buffer[group_id]["photos"].append(msg["photo"][-1]["file_id"])
+            
+            # Сохраняем подпись, если есть
+            if "caption" in msg:
+                album_buffer[group_id]["caption"] = msg["caption"]
+            
+            # Если набралось 9 фото — отправляем сразу
+            if len(album_buffer[group_id]["photos"]) >= 9:
+                # Обрабатываем альбом
+                caption = album_buffer[group_id]["caption"]
                 new_text = replace_mentions(caption)
                 topic = detect_topic(new_text)
+                photos = album_buffer[group_id]["photos"]
+                del album_buffer[group_id]
                 
-                media_group_id_clean = media_group_id
-                media_groups.pop(media_group_id_clean)
-
-                # Отправляем альбом
+                # Отправляем как медиа-группу (альбом)
                 url = f"https://api.telegram.org/bot{TOKEN}/sendMediaGroup"
-                media = [{"type": "photo", "media": pid} for pid in media_groups[media_group_id_clean]["photos"]]
-                payload = {
-                    "chat_id": TARGET_GROUP,
-                    "media": media
-                }
-                # Если есть подпись, добавляем её к первому фото
+                media = [{"type": "photo", "media": p} for p in photos]
                 if caption:
                     media[0]["caption"] = f"📌 **{topic}**\n\n{new_text}"
                     media[0]["parse_mode"] = "Markdown"
-                requests.post(url, json=payload)
-                logger.info(f"📚 Альбом отправлен в {topic} ({len(media)} фото)")
+                requests.post(url, json={"chat_id": TARGET_GROUP, "media": media})
+                logger.info(f"📚 Альбом (9 фото) отправлен в {topic}")
+                return jsonify({"status": "ok"}), 200
+            
+            # Если прошло больше 1 секунды, а 9 фото не набралось — отправляем то, что есть
+            if time.time() - album_buffer[group_id]["timestamp"] > 2:
+                caption = album_buffer[group_id]["caption"]
+                new_text = replace_mentions(caption)
+                topic = detect_topic(new_text)
+                photos = album_buffer[group_id]["photos"]
+                del album_buffer[group_id]
+                
+                url = f"https://api.telegram.org/bot{TOKEN}/sendMediaGroup"
+                media = [{"type": "photo", "media": p} for p in photos]
+                if caption:
+                    media[0]["caption"] = f"📌 **{topic}**\n\n{new_text}"
+                    media[0]["parse_mode"] = "Markdown"
+                requests.post(url, json={"chat_id": TARGET_GROUP, "media": media})
+                logger.info(f"📚 Альбом ({len(photos)} фото) отправлен в {topic}")
+                return jsonify({"status": "ok"}), 200
+            
             return jsonify({"status": "ok"}), 200
 
-        # Обычное одиночное фото
+        # Одиночное сообщение (не альбом)
         text = ""
         photo_url = None
 
