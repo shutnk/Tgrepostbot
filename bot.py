@@ -128,11 +128,12 @@ class WebhookHandler(BaseHTTPRequestHandler):
             return
 
         content_length = int(self.headers['Content-Length'])
-        post_data = self.rfile.read(content_length).decode('utf-8')  # <-- ДОБАВЛЕНА ДЕКОДИРОВКА
+        post_data = self.rfile.read(content_length)  # БЕЗ ДЕКОДИРОВКИ
         
         try:
             update = json.loads(post_data)
-        except:
+        except Exception as e:
+            logger.error(f"❌ Ошибка JSON: {e}")
             self.send_response(200)
             self.end_headers()
             return
