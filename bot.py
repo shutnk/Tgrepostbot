@@ -1,12 +1,13 @@
 import time
 import re
 import logging
-import requests
-from flask import Flask, request, jsonify
+import json
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
 TARGET_GROUP = -1003991874844
 MENTION_REPLACE = '@esen_baevich'
+RENDER_EXTERNAL_URL = "https://tgrepostbot.onrender.com"
 
 TOPIC_MAP = {
     "сумки hermes": "Сумки Hermes",
@@ -98,7 +99,6 @@ TOPIC_MAP = {
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-app = Flask(__name__)
 
 def detect_topic(text):
     if not text:
@@ -114,16 +114,33 @@ def replace_mentions(text):
 
 album_buffer = {}
 
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    try:
-        update = request.get_json()
-        if not update:
-            return jsonify({"status": "ok"}), 200
+class WebhookHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running!")
+
+    def do_POST(self):
+        if self.path != "/webhook":
+            self.send_response(404)
+            self.end_headers()
+            return
+
+        content_length = int(self.headers['Content-Length'])
+        post_data = self.rfile.read(content_length)
+        
+        try:
+            update = json.loads(post_data)
+        except:
+            self.send_response(200)
+            self.end_headers()
+            return
 
         msg = update.get("message")
         if not msg:
-            return jsonify({"status": "ok"}), 200
+            self.send_response(200)
+            self.end_headers()
+            return
 
         group_id = msg.get("media_group_id")
         
@@ -151,9 +168,13 @@ def webhook():
                     media[0]["parse_mode"] = "Markdown"
                 requests.post(url, json={"chat_id": TARGET_GROUP, "media": media})
                 logger.info(f"📚 Альбом ({len(photos)} фото) отправлен в {topic}")
-                return jsonify({"status": "ok"}), 200
+                self.send_response(200)
+                self.end_headers()
+                return
             
-            return jsonify({"status": "ok"}), 200
+            self.send_response(200)
+            self.end_headers()
+            return
 
         text = ""
         photo_url = None
@@ -170,7 +191,9 @@ def webhook():
             text = msg["caption"]
 
         if not text and not photo_url:
-            return jsonify({"status": "ok"}), 200
+            self.send_response(200)
+            self.end_headers()
+            return
 
         new_text = replace_mentions(text)
         topic = detect_topic(new_text)
@@ -195,17 +218,10 @@ def webhook():
             requests.post(url, data=payload)
             logger.info(f"📝 Текст отправлен в {topic}")
 
-        return jsonify({"status": "ok"}), 200
-    except Exception as e:
-        logger.error(f"❌ Ошибка Webhook: {e}")
-        return jsonify({"status": "error"}), 500
-
-@app.route("/", methods=["GET"])
-def index():
-    return "Bot is running!"
+        self.send_response(200)
+        self.end_headers()
 
 def setup_webhook():
-    RENDER_EXTERNAL_URL = "https://tgrepostbot.onrender.com"
     webhook_url = f"{RENDER_EXTERNAL_URL}/webhook"
     url = f"https://api.telegram.org/bot{TOKEN}/setWebhook?url={webhook_url}"
     try:
@@ -219,4 +235,6 @@ def setup_webhook():
 
 if __name__ == "__main__":
     setup_webhook()
-    app.run(host="0.0.0.0", port=10000, debug=False, use_reloader=False)
+    server = HTTPServer(("0.0.0.0", 10000), WebhookHandler)
+    logger.info("🚀 Сервер запущен на порту 10000")
+    server.serve_forever()
