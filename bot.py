@@ -2,6 +2,7 @@ import time
 import re
 import logging
 import requests
+from flask import Flask, request, jsonify
 
 TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
 TARGET_GROUP = -1003991874844
@@ -97,6 +98,7 @@ TOPIC_MAP = {
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+app = Flask(__name__)
 
 def detect_topic(text):
     if not text:
@@ -110,47 +112,79 @@ def detect_topic(text):
 def replace_mentions(text):
     return re.sub(r'@\w+', MENTION_REPLACE, text)
 
-def main():
-    offset = 0
-    logger.info("🚀 Запуск бота-приёмника (с поддержкой фото)...")
-    while True:
-        try:
-            url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={offset}&timeout=30"
-            resp = requests.get(url, timeout=35)
-            data = resp.json()
-            if not data.get("ok"):
-                continue
-            for update in data.get("result", []):
-                offset = update["update_id"] + 1
-                msg = update.get("message")
-                if not msg:
-                    continue
-                
-                # ===== ПОДДЕРЖКА МЕДИА И ТЕКСТА =====
-                text = ""
-                if "caption" in msg:
-                    text = msg["caption"]
-                elif "text" in msg:
-                    text = msg["text"]
-                
-                if not text:
-                    continue
-                
-                topic = detect_topic(text)
-                new_text = replace_mentions(text)
-                
-                send_url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-                payload = {
-                    "chat_id": TARGET_GROUP,
-                    "text": f"📌 **{topic}**\n\n{new_text}",
-                    "parse_mode": "Markdown"
-                }
-                requests.post(send_url, data=payload)
-                logger.info(f"📦 Принят в ЛС и отправлен в {topic}")
-                time.sleep(1)
-        except Exception as e:
-            logger.error(f"❌ Ошибка цикла: {e}")
-            time.sleep(5)
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    try:
+        update = request.get_json()
+        if not update:
+            return jsonify({"status": "ok"}), 200
+
+        msg = update.get("message")
+        if not msg:
+            return jsonify({"status": "ok"}), 200
+
+        text = ""
+        photo_url = None
+
+        if "photo" in msg:
+            photo_list = msg["photo"]
+            if photo_list:
+                photo_url = photo_list[-1]["file_id"]
+            if "caption" in msg:
+                text = msg["caption"]
+        elif "text" in msg:
+            text = msg["text"]
+        elif "caption" in msg:
+            text = msg["caption"]
+
+        if not text and not photo_url:
+            return jsonify({"status": "ok"}), 200
+
+        new_text = replace_mentions(text)
+        topic = detect_topic(new_text)
+
+        if photo_url:
+            url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
+            payload = {
+                "chat_id": TARGET_GROUP,
+                "photo": photo_url,
+                "caption": f"📌 **{topic}**\n\n{new_text}",
+                "parse_mode": "Markdown"
+            }
+            requests.post(url, data=payload)
+            logger.info(f"📸 Фото отправлено в {topic}")
+        else:
+            url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+            payload = {
+                "chat_id": TARGET_GROUP,
+                "text": f"📌 **{topic}**\n\n{new_text}",
+                "parse_mode": "Markdown"
+            }
+            requests.post(url, data=payload)
+            logger.info(f"📝 Текст отправлен в {topic}")
+
+        return jsonify({"status": "ok"}), 200
+    except Exception as e:
+        logger.error(f"❌ Ошибка Webhook: {e}")
+        return jsonify({"status": "error"}), 500
+
+@app.route("/", methods=["GET"])
+def index():
+    return "Bot is running!"
+
+def setup_webhook():
+    webhook_url = f"https://{RENDER_EXTERNAL_URL}/webhook"
+    url = f"https://api.telegram.org/bot{TOKEN}/setWebhook?url={webhook_url}"
+    try:
+        resp = requests.get(url, timeout=15)
+        if resp.json().get("ok"):
+            logger.info(f"✅ Webhook установлен: {webhook_url}")
+        else:
+            logger.error(f"❌ Ошибка установки Webhook: {resp.text}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка подключения к Telegram: {e}")
 
 if __name__ == "__main__":
-    main()
+    RENDER_EXTERNAL_URL = "https://tgrepostbot.onrender.com"  # Замени на свой URL
+    setup_webhook()
+    app.run(host="0.0.0.0", port=10000)
