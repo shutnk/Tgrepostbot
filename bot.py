@@ -112,7 +112,6 @@ def detect_topic(text):
 def replace_mentions(text):
     return re.sub(r'@\w+', MENTION_REPLACE, text)
 
-# === БУФЕР ДЛЯ АЛЬБОМОВ ===
 album_buffer = {}
 
 @app.route("/webhook", methods=["POST"])
@@ -126,42 +125,18 @@ def webhook():
         if not msg:
             return jsonify({"status": "ok"}), 200
 
-        # Получаем media_group_id
         group_id = msg.get("media_group_id")
         
-        # Если это альбом
         if group_id:
             if group_id not in album_buffer:
                 album_buffer[group_id] = {"photos": [], "caption": "", "timestamp": time.time()}
             
-            # Добавляем фото
             if "photo" in msg:
                 album_buffer[group_id]["photos"].append(msg["photo"][-1]["file_id"])
             
-            # Сохраняем подпись, если есть
             if "caption" in msg:
                 album_buffer[group_id]["caption"] = msg["caption"]
             
-            # Если набралось 9 фото — отправляем сразу
-            if len(album_buffer[group_id]["photos"]) >= 9:
-                # Обрабатываем альбом
-                caption = album_buffer[group_id]["caption"]
-                new_text = replace_mentions(caption)
-                topic = detect_topic(new_text)
-                photos = album_buffer[group_id]["photos"]
-                del album_buffer[group_id]
-                
-                # Отправляем как медиа-группу (альбом)
-                url = f"https://api.telegram.org/bot{TOKEN}/sendMediaGroup"
-                media = [{"type": "photo", "media": p} for p in photos]
-                if caption:
-                    media[0]["caption"] = f"📌 **{topic}**\n\n{new_text}"
-                    media[0]["parse_mode"] = "Markdown"
-                requests.post(url, json={"chat_id": TARGET_GROUP, "media": media})
-                logger.info(f"📚 Альбом (9 фото) отправлен в {topic}")
-                return jsonify({"status": "ok"}), 200
-            
-            # Если прошло больше 1 секунды, а 9 фото не набралось — отправляем то, что есть
             if time.time() - album_buffer[group_id]["timestamp"] > 2:
                 caption = album_buffer[group_id]["caption"]
                 new_text = replace_mentions(caption)
@@ -180,7 +155,6 @@ def webhook():
             
             return jsonify({"status": "ok"}), 200
 
-        # Одиночное сообщение (не альбом)
         text = ""
         photo_url = None
 
