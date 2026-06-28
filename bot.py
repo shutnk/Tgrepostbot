@@ -173,18 +173,18 @@ def index():
     return "Bot is running!"
 
 def setup_webhook():
-    webhook_url = f"https://{RENDER_EXTERNAL_URL}/webhook"
+    RENDER_EXTERNAL_URL = "https://tgrepostbot.onrender.com"
+    webhook_url = f"{RENDER_EXTERNAL_URL}/webhook"
     url = f"https://api.telegram.org/bot{TOKEN}/setWebhook?url={webhook_url}"
     try:
         resp = requests.get(url, timeout=15)
         if resp.json().get("ok"):
-            logger.info(f"✅ Webhook установлен: {webhook_url}")
+            logger.info(f"✅ Webhook установлен на: {webhook_url}")
         else:
             logger.error(f"❌ Ошибка установки Webhook: {resp.text}")
     except Exception as e:
         logger.error(f"❌ Ошибка подключения к Telegram: {e}")
 
 if __name__ == "__main__":
-    RENDER_EXTERNAL_URL = "https://tgrepostbot.onrender.com"  # Замени на свой URL
     setup_webhook()
     app.run(host="0.0.0.0", port=10000)
