@@ -4,8 +4,10 @@ import re
 import logging
 import os
 import base64
+import io
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
+from telethon.tl.functions.channels import GetForumTopicsRequest
 
 API_ID = 17349
 API_HASH = '344583e45741c457fe1862106095a5eb'
@@ -145,6 +147,22 @@ async def copy_posts():
         logger.error(f"❌ Не удалось получить канал: {e}")
         return
 
+    # ШАГ 1: Загружаем список тем и их ID
+    try:
+        group = await client.get_entity(TARGET_GROUP)
+        result = await client(GetForumTopicsRequest(
+            channel=group,
+            offset_date=0,
+            offset_id=0,
+            offset_topic=0,
+            limit=100
+        ))
+        topic_ids = {t.title: t.id for t in result.topics}
+        logger.info(f"✅ Загружено ID тем: {list(topic_ids.keys())}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка загрузки ID тем: {e}")
+        return
+
     last_msg_id = 0
     while True:
         try:
@@ -164,12 +182,40 @@ async def copy_posts():
                     text = msg.message
                     topic = detect_topic(text)
                     new_text = replace_mentions(text)
+                    thread_id = topic_ids.get(topic)
+                    if not thread_id:
+                        thread_id = topic_ids.get("Ассортимент")
                     
-                    await client.send_message(
-                        TARGET_GROUP,
-                        f"📌 **{topic}**\n\n{new_text}"
-                    )
-                    logger.info(f"📦 Отправлено в {topic}")
+                    # ШАГ 2: Если есть медиа — скачиваем и отправляем с фото
+                    if msg.media:
+                        try:
+                            media_bytes = await client.download_media(msg, file=io.BytesIO())
+                            await client.send_file(
+                                TARGET_GROUP,
+                                file=media_bytes,
+                                caption=f"📌 **{topic}**\n\n{new_text}",
+                                message_thread_id=thread_id,
+                                parse_mode="markdown"
+                            )
+                            logger.info(f"📸 Фото отправлено в {topic}")
+                        except Exception as e:
+                            logger.error(f"❌ Ошибка отправки фото: {e}")
+                            # Если фото не отправилось — шлём текст
+                            await client.send_message(
+                                TARGET_GROUP,
+                                f"📌 **{topic}**\n\n{new_text}",
+                                message_thread_id=thread_id
+                            )
+                            logger.info(f"📝 Текст отправлен в {topic}")
+                    else:
+                        # ШАГ 3: Отправляем только текст в правильную тему
+                        await client.send_message(
+                            TARGET_GROUP,
+                            f"📌 **{topic}**\n\n{new_text}",
+                            message_thread_id=thread_id
+                        )
+                        logger.info(f"📝 Текст отправлен в {topic}")
+                    
                     last_msg_id = msg.id
                     time.sleep(2)
             
@@ -180,7 +226,7 @@ async def copy_posts():
             await asyncio.sleep(10)
 
 async def main():
-    logger.info("🚀 Запуск финального копирования...")
+    logger.info("🚀 Запуск финального копирования (с фото и темами)...")
     await copy_posts()
 
 if __name__ == "__main__":
