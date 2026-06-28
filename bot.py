@@ -148,9 +148,10 @@ async def copy_posts():
     last_msg_id = 0
     while True:
         try:
+            # ЗАМЕНА: берём 100 сообщений за раз, чтобы охватить всё
             history = await client(GetHistoryRequest(
                 peer=channel,
-                limit=5,
+                limit=100,
                 offset_date=0,
                 offset_id=0,
                 max_id=0,
@@ -165,7 +166,6 @@ async def copy_posts():
                     topic = detect_topic(text)
                     new_text = replace_mentions(text)
                     
-                    # Отправляем в группу (без указания темы, так как нет ID)
                     await client.send_message(
                         TARGET_GROUP,
                         f"📌 **{topic}**\n\n{new_text}"
