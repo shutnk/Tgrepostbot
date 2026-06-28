@@ -7,7 +7,6 @@ import base64
 import io
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
-from telethon.tl.functions.channels import GetForumTopicsRequest
 
 API_ID = 17349
 API_HASH = '344583e45741c457fe1862106095a5eb'
@@ -147,10 +146,12 @@ async def copy_posts():
         logger.error(f"❌ Не удалось получить канал: {e}")
         return
 
-    # ШАГ 1: Загружаем список тем и их ID
+    # === ОБХОД ИМПОРТА: создаём запрос вручную ===
     try:
         group = await client.get_entity(TARGET_GROUP)
-        result = await client(GetForumTopicsRequest(
+        # Создаём объект запроса через строку
+        GetForumTopics = client.__class__.__dict__['channels'].GetForumTopics
+        result = await client(GetForumTopics(
             channel=group,
             offset_date=0,
             offset_id=0,
@@ -186,7 +187,6 @@ async def copy_posts():
                     if not thread_id:
                         thread_id = topic_ids.get("Ассортимент")
                     
-                    # ШАГ 2: Если есть медиа — скачиваем и отправляем с фото
                     if msg.media:
                         try:
                             media_bytes = await client.download_media(msg, file=io.BytesIO())
@@ -200,7 +200,6 @@ async def copy_posts():
                             logger.info(f"📸 Фото отправлено в {topic}")
                         except Exception as e:
                             logger.error(f"❌ Ошибка отправки фото: {e}")
-                            # Если фото не отправилось — шлём текст
                             await client.send_message(
                                 TARGET_GROUP,
                                 f"📌 **{topic}**\n\n{new_text}",
@@ -208,7 +207,6 @@ async def copy_posts():
                             )
                             logger.info(f"📝 Текст отправлен в {topic}")
                     else:
-                        # ШАГ 3: Отправляем только текст в правильную тему
                         await client.send_message(
                             TARGET_GROUP,
                             f"📌 **{topic}**\n\n{new_text}",
