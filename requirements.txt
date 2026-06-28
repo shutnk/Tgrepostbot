@@ -4,3 +4,4 @@ telethon
 pyrogram
 selenium
 webdriver-manager
+flask
