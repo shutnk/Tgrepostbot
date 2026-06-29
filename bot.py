@@ -1,18 +1,27 @@
 import os
 import re
 import time
+import asyncio
 import requests
 import logging
 import base64
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from bs4 import BeautifulSoup
+from telethon import TelegramClient
+from telethon.tl.functions.messages import GetHistoryRequest
 
 TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
 TARGET_GROUP_ID = -1003991874844
 TARGET_GROUP_USERNAME = "trifferi_katalog"
 
 MENTION_REPLACE = '@esen_baevich'
+
+API_ID = 17349
+API_HASH = '344583e45741c457fe1862106095a5eb'
+SESSION_FILE = 'session.session'
+SESSION_B64_FILE = 'session.b64'
+SOURCE_CHANNEL = '@blvckrooom'
 
 TOPIC_MAP = {
     "сумки hermes": "Сумки Hermes",
@@ -128,7 +137,6 @@ def run_fake_server():
     logger.info("✅ Фейковый HTTP-сервер запущен на порту 10000")
     server.serve_forever()
 
-# === ПАРСИМ ТЕМЫ ПРЯМО ИЗ ССЫЛОК ГРУППЫ ===
 def get_topic_ids_from_html():
     url = f"https://t.me/s/{TARGET_GROUP_USERNAME}"
     try:
@@ -160,6 +168,59 @@ def get_topic_ids_from_html():
         logger.error(f"❌ Ошибка парсинга тем: {e}")
         return {}
 
+async def get_channel_posts():
+    if not os.path.exists(SESSION_B64_FILE):
+        logger.error(f"❌ Файл {SESSION_B64_FILE} не найден!")
+        return []
+
+    try:
+        with open(SESSION_B64_FILE, 'r') as f:
+            b64_data = f.read().strip()
+        decoded = base64.b64decode(b64_data)
+        with open(SESSION_FILE, 'wb') as f:
+            f.write(decoded)
+        os.chmod(SESSION_FILE, 0o600)
+        logger.info("✅ Сессия загружена из .b64")
+    except Exception as e:
+        logger.error(f"❌ Ошибка декодирования: {e}")
+        return []
+
+    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+    await client.connect()
+    logger.info("✅ Подключение через сессию установлено!")
+    
+    try:
+        channel = await client.get_entity(SOURCE_CHANNEL)
+    except Exception as e:
+        logger.error(f"❌ Не удалось получить канал: {e}")
+        return []
+
+    posts = []
+    history = await client(GetHistoryRequest(
+        peer=channel,
+        limit=100,
+        offset_date=0,
+        offset_id=0,
+        max_id=0,
+        min_id=0,
+        add_offset=0,
+        hash=0
+    ))
+    for msg in reversed(history.messages):
+        if msg.message:
+            text = msg.message
+            photo_url = None
+            if msg.media:
+                try:
+                    photo_path = await client.download_media(msg, file="temp_photo.jpg")
+                    photo_url = photo_path
+                except:
+                    photo_url = None
+            posts.append({"text": text, "photo_url": photo_url})
+    logger.info(f"✅ Загружено {len(posts)} постов из канала")
+    await client.disconnect()
+    return posts
+
 def send_to_topic(topic_name, text, photo_url=None):
     topic_ids = get_topic_ids_from_html()
     thread_id = topic_ids.get(topic_name)
@@ -170,14 +231,14 @@ def send_to_topic(topic_name, text, photo_url=None):
 
     if photo_url:
         url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
+        files = {'photo': open(photo_url, 'rb')}
         payload = {
             "chat_id": TARGET_GROUP_ID,
-            "photo": photo_url,
             "caption": f"📌 **{topic_name}**\n\n{text}",
             "parse_mode": "Markdown",
             "message_thread_id": thread_id
         }
-        requests.post(url, data=payload)
+        requests.post(url, files=files, data=payload)
         logger.info(f"📸 Фото отправлено в {topic_name} (ID: {thread_id})")
     else:
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
@@ -191,16 +252,18 @@ def send_to_topic(topic_name, text, photo_url=None):
         logger.info(f"📝 Текст отправлен в {topic_name} (ID: {thread_id})")
 
 def main():
-    logger.info("🚀 Запуск финального копирования через HTML-парсинг...")
-    
-    # ВСТАВЬ СЮДА КОД ПОЛУЧЕНИЯ ПОСТОВ ИЗ КАНАЛА
-    # Например, через Telethon или Requests
-    logger.info("Здесь должен быть код получения постов из @blvckrooom")
-    # Пример:
-    # posts = get_posts_from_channel()
-    # for post in posts:
-    #     topic = detect_topic(post["text"])
-    #     send_to_topic(topic, post["text"], post.get("photo_url"))
+    logger.info("🚀 Запуск финального копирования...")
+    posts = asyncio.run(get_channel_posts())
+    if not posts:
+        logger.info("Постов не найдено.")
+        return
+
+    for post in posts:
+        text = replace_mentions(post["text"])
+        topic = detect_topic(text)
+        photo = post.get("photo_url")
+        send_to_topic(topic, text, photo)
+        time.sleep(3)
 
 if __name__ == "__main__":
     http_thread = threading.Thread(target=run_fake_server, daemon=True)
