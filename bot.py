@@ -2,7 +2,6 @@ import os
 import re
 import time
 import asyncio
-import requests
 import logging
 import base64
 import threading
@@ -147,7 +146,7 @@ def run_fake_server():
     logger.info("✅ Фейковый HTTP-сервер запущен на порту 10000")
     server.serve_forever()
 
-async def get_channel_posts():
+async def get_channel_albums():
     if not os.path.exists(SESSION_B64_FILE):
         logger.error(f"❌ Файл {SESSION_B64_FILE} не найден!")
         return []
@@ -174,10 +173,10 @@ async def get_channel_posts():
         logger.error(f"❌ Не удалось получить канал: {e}")
         return []
 
-    album_groups = {}
+    albums = []
     history = await client(GetHistoryRequest(
         peer=channel,
-        limit=20,
+        limit=50,
         offset_date=0,
         offset_id=0,
         max_id=0,
@@ -185,38 +184,34 @@ async def get_channel_posts():
         add_offset=0,
         hash=0
     ))
+    
+    # Собираем альбомы по grouped_id
+    album_groups = {}
     for msg in history.messages:
         if msg.grouped_id:
             if msg.grouped_id not in album_groups:
                 album_groups[msg.grouped_id] = []
             album_groups[msg.grouped_id].append(msg)
     
-    posts = []
+    # Обрабатываем только альбомы (игнорируем одиночные)
     for group_id, messages in album_groups.items():
-        text = messages[-1].message or ""
-        photo_paths = set()
-        for m in messages:
-            # === ИСПРАВЛЕНИЕ: принимаем и photo, и document ===
-            if m.photo or m.document:
+        if len(messages) > 1:
+            text = messages[-1].message or ""
+            photo_paths = []
+            for m in messages:
                 try:
+                    # Скачиваем каждое фото в альбоме
                     path = await client.download_media(m, file="temp_photo.jpg")
-                    photo_paths.add(path)
+                    photo_paths.append(path)
                 except:
                     pass
-        if photo_paths:
-            posts.append({"text": text, "photo_paths": list(photo_paths)})
+            if photo_paths:
+                albums.append({"text": text, "photo_paths": photo_paths})
+                logger.info(f"📚 Найден альбом с {len(photo_paths)} фото")
     
-    for msg in history.messages:
-        if (msg.photo or msg.document) and not msg.grouped_id:
-            try:
-                path = await client.download_media(msg, file="temp_photo.jpg")
-                posts.append({"text": msg.message or "", "photo_paths": [path]})
-            except:
-                pass
-    
-    logger.info(f"✅ Загружено {len(posts)} постов/альбомов из канала")
+    logger.info(f"✅ Загружено {len(albums)} альбомов")
     await client.disconnect()
-    return posts
+    return albums
 
 def send_album_to_topic(topic_name, text, photo_paths):
     thread_id = TOPIC_IDS.get(topic_name)
@@ -245,19 +240,18 @@ def send_album_to_topic(topic_name, text, photo_paths):
         logger.error(f"❌ Ошибка отправки альбома: {e}")
 
 def main():
-    logger.info("🚀 Запуск финального копирования...")
-    posts = asyncio.run(get_channel_posts())
-    if not posts:
-        logger.info("Постов не найдено.")
+    logger.info("🚀 Запуск финального копирования (только альбомы)...")
+    albums = asyncio.run(get_channel_albums())
+    if not albums:
+        logger.info("Альбомов не найдено.")
         return
 
-    for post in posts:
-        text = replace_mentions(post["text"])
+    for album in albums:
+        text = replace_mentions(album["text"])
         topic = detect_topic(text)
-        photo_paths = post["photo_paths"]
-        if photo_paths:
-            send_album_to_topic(topic, text, photo_paths)
-            time.sleep(6)
+        photo_paths = album["photo_paths"]
+        send_album_to_topic(topic, text, photo_paths)
+        time.sleep(6)
 
 if __name__ == "__main__":
     http_thread = threading.Thread(target=run_fake_server, daemon=True)
