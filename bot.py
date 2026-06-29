@@ -7,7 +7,7 @@ import base64
 import io
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from telethon import TelegramClient, functions
+from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
 
 API_ID = 17349
@@ -159,19 +159,15 @@ async def copy_posts():
         logger.error(f"❌ Не удалось получить канал: {e}")
         return
 
-    # === ИСПРАВЛЕННЫЙ ВЫЗОВ ЧЕРЕЗ functions ===
+    # === ПОЛУЧАЕМ ID ТЕМ ЧЕРЕЗ УЧАСТНИКОВ ФОРУМА ===
     try:
         group = await client.get_entity(TARGET_GROUP)
-        result = await client(
-            functions.channels.GetForumTopics(
-                channel=group,
-                offset_date=0,
-                offset_id=0,
-                offset_topic=0,
-                limit=100
-            )
-        )
-        topic_ids = {t.title: t.id for t in result.topics}
+        participants = await client.get_participants(group)
+        topic_ids = {}
+        for p in participants:
+            if hasattr(p, 'topic_id') and p.topic_id:
+                topic_name = p.first_name or p.title or f"Topic {p.topic_id}"
+                topic_ids[topic_name] = p.topic_id
         logger.info(f"✅ Загружено ID тем: {list(topic_ids.keys())}")
     except Exception as e:
         logger.error(f"❌ Ошибка загрузки ID тем: {e}")
