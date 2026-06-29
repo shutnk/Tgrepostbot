@@ -36,7 +36,7 @@ TOPIC_MAP = {
     "zimmermann": "ZIMMERMANN",
     "сумки hermes": "Ассортимент",
     "обувь hermes": "Ассортимент",
-    "ремень hermes": "Ассортимент",
+    "ремень hermes": "Ремень Hermes",
     "сумки chanel": "Ассортимент",
     "chanel": "Ассортимент",
     "женская одежда": "Ассортимент",
@@ -50,7 +50,7 @@ TOPIC_MAP = {
     "женская верхняя одежда": "Ассортимент",
     "ремни": "Ассортимент",
     "шарфы и шапки": "Ассортимент",
-    "очки": "Ассортимент",
+    "очки": "Очки",
     "украшения schiaparelli": "Ассортимент",
     "сумки schiaparelli": "Ассортимент",
     "dolce&gabbana": "Ассортимент",
@@ -190,13 +190,16 @@ async def get_channel_posts():
             text = msg.message or ""
             photo_urls = []
             if msg.media:
-                if isinstance(msg.media, list):
-                    for media_item in msg.media:
-                        try:
-                            photo_path = await client.download_media(media_item, file="temp_photo.jpg")
-                            photo_urls.append(photo_path)
-                        except:
-                            pass
+                # Если это медиа-группа, получаем все фото через группу
+                if msg.grouped_id:
+                    group_messages = await client.get_messages(channel, limit=10, min_id=msg.id - 5)
+                    for g_msg in group_messages:
+                        if g_msg.grouped_id == msg.grouped_id and g_msg.photo:
+                            try:
+                                photo_path = await client.download_media(g_msg, file="temp_photo.jpg")
+                                photo_urls.append(photo_path)
+                            except:
+                                pass
                 else:
                     try:
                         photo_path = await client.download_media(msg, file="temp_photo.jpg")
