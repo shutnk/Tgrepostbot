@@ -185,28 +185,32 @@ async def get_channel_albums():
         hash=0
     ))
     
-    # Собираем альбомы по grouped_id
-    album_groups = {}
     for msg in history.messages:
+        if msg.media and not msg.grouped_id:
+            # Одиночные фото — игнорируем
+            continue
         if msg.grouped_id:
-            if msg.grouped_id not in album_groups:
-                album_groups[msg.grouped_id] = []
-            album_groups[msg.grouped_id].append(msg)
-    
-    # Обрабатываем только альбомы (игнорируем одиночные)
-    for group_id, messages in album_groups.items():
-        if len(messages) > 1:
-            text = messages[-1].message or ""
+            # Это сообщение входит в альбом
+            # Но чтобы не дублировать, мы обработаем только первое сообщение с этим grouped_id
+            if msg.grouped_id in [a.get("grouped_id") for a in albums]:
+                continue
+            
+            text = msg.message or ""
             photo_paths = []
-            for m in messages:
-                try:
-                    # Скачиваем каждое фото в альбоме
-                    path = await client.download_media(m, file="temp_photo.jpg")
-                    photo_paths.append(path)
-                except:
-                    pass
+            # Собираем все фото из этого альбома
+            for m in history.messages:
+                if m.grouped_id == msg.grouped_id and (m.photo or m.document):
+                    try:
+                        path = await client.download_media(m, file="temp_photo.jpg")
+                        photo_paths.append(path)
+                    except:
+                        pass
             if photo_paths:
-                albums.append({"text": text, "photo_paths": photo_paths})
+                albums.append({
+                    "text": text,
+                    "photo_paths": photo_paths,
+                    "grouped_id": msg.grouped_id
+                })
                 logger.info(f"📚 Найден альбом с {len(photo_paths)} фото")
     
     logger.info(f"✅ Загружено {len(albums)} альбомов")
@@ -240,7 +244,7 @@ def send_album_to_topic(topic_name, text, photo_paths):
         logger.error(f"❌ Ошибка отправки альбома: {e}")
 
 def main():
-    logger.info("🚀 Запуск финального копирования (только альбомы)...")
+    logger.info("🚀 Запуск финального копирования...")
     albums = asyncio.run(get_channel_albums())
     if not albums:
         logger.info("Альбомов не найдено.")
