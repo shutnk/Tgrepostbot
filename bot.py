@@ -190,7 +190,6 @@ async def get_channel_posts():
             text = msg.message or ""
             photo_urls = []
             if msg.media:
-                # Если это альбом — качаем все фото
                 if isinstance(msg.media, list):
                     for media_item in msg.media:
                         try:
@@ -250,32 +249,10 @@ def main():
 
     for post in posts:
         text = replace_mentions(post["text"])
-        photo_urls = post["photo_urls"]
-        
-        # Если есть несколько фото и несколько тем
-        if len(photo_urls) > 1:
-            # Разбиваем текст по хэштегам
-            hashtags = re.findall(r'#(\w+)', text.lower())
-            if len(hashtags) >= 2:
-                # Отправляем каждое фото с соответствующим описанием
-                for i, photo_url in enumerate(photo_urls):
-                    # Берём тему из хэштега
-                    topic = detect_topic(text)
-                    send_to_topic(topic, text, photo_url)
-                    logger.info(f"🖼️ Фото {i+1}/{len(photo_urls)} отправлено")
-                    time.sleep(2)
-            else:
-                # Если хэштегов мало — отправляем всё как есть
-                topic = detect_topic(text)
-                for photo_url in photo_urls:
-                    send_to_topic(topic, text, photo_url)
-                    time.sleep(2)
-        else:
-            # Обычный пост с одним фото
-            topic = detect_topic(text)
-            photo_url = photo_urls[0] if photo_urls else None
+        topic = detect_topic(text)
+        for photo_url in post["photo_urls"]:
             send_to_topic(topic, text, photo_url)
-            time.sleep(3)
+            time.sleep(2)
 
 if __name__ == "__main__":
     http_thread = threading.Thread(target=run_fake_server, daemon=True)
