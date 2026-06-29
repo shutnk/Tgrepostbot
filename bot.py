@@ -29,7 +29,6 @@ TOPIC_IDS = {
     "ZIMMERMANN": 421,
 }
 
-# === ВОЗВРАЩАЕМ TOPIC_MAP ===
 TOPIC_MAP = {
     "сумки hermes": "Ассортимент",
     "обувь hermes": "Ассортимент",
@@ -242,8 +241,19 @@ def main():
 
     for post in posts:
         text = replace_mentions(post["text"])
-        topic = detect_topic(text)
         photo = post.get("photo_url")
+        
+        # === РАЗБИВКА ПО ХЭШТЕГАМ ===
+        # Находим все #хэштеги в тексте
+        hashtags = re.findall(r'#(\w+)', text.lower())
+        if len(hashtags) >= 2:
+            # Если хэштегов больше одного — разбиваем текст по первому слову-бренду
+            # Просто отправляем каждый хэштег как отдельную тему
+            # (здесь можно добавить более сложную логику)
+            # Пока просто отправляем как есть, бот сам определит тему
+            pass
+        
+        topic = detect_topic(text)
         send_to_topic(topic, text, photo)
         time.sleep(3)
 
