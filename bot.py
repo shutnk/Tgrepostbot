@@ -12,7 +12,6 @@ from telethon.tl.functions.messages import GetHistoryRequest
 
 TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
 TARGET_GROUP_ID = -1003991874844
-TARGET_GROUP_USERNAME = "trifferi_katalog"
 
 MENTION_REPLACE = '@esen_baevich'
 
@@ -21,101 +20,6 @@ API_HASH = '344583e45741c457fe1862106095a5eb'
 SESSION_FILE = 'session.session'
 SESSION_B64_FILE = 'session.b64'
 SOURCE_CHANNEL = '@blvckrooom'
-
-# === РУЧНОЕ СООТВЕТСТВИЕ ТЕМ ===
-TOPIC_IDS = {
-    "Сумки Hermes": 392,
-    "Обувь Hermes": 394,
-    "Ремень Hermes": 386,
-    "Сумки CHANEL": 396,
-    "Chanel": 399,
-    "Женская одежда": 397,
-    "Сумки THE ROW": 398,
-    "Сумки MIU MIU": 400,
-    "Одежда для детей": 401,
-    "Сумки PRADA": 402,
-    "CHROME HEARTS": 403,
-    "Женская обувь": 404,
-    "Сумки YSL": 405,
-    "Женская верхняя одежда (Кожа, кашемир)": 406,
-    "Ремни": 407,
-    "Шарфы и шапки": 408,
-    "Одежда Loro/Brunello/Kiton/Zegna": 409,
-    "Очки": 410,
-    "Украшения Schiaparelli": 411,
-    "Сумки Schiaparelli": 412,
-    "Dolce&Gabbana": 413,
-    "Мужская верхняя одежда": 414,
-    "Купальники и пляжная одежда": 415,
-    "Сумки Loewe": 416,
-    "Сумки Loro Piana": 417,
-    "Сумки BOTTEGA VENETA": 418,
-    "Классическая мужская обувь": 419,
-    "Сумки Louis Vuitton": 420,
-    "ZIMMERMANN": 421,
-    "EXCLUSIVE": 422,
-    "Ralph Lauren": 423,
-    "BALENCIAGA": 424,
-    "FENDI": 425,
-    "GUCCI": 426,
-    "Сумки Jacquemus": 427,
-    "Сумки BALENCIAGA": 428,
-    "Кроссовки Louis Vuitton": 429,
-    "Кроссовки [LUXURY SNEAKERS]": 430,
-    "Сумки DIOR": 431,
-    "Сумки GOYARD": 432,
-    "Мужские сумки": 433,
-    "Чемоданы и дорожные сумки": 434,
-    "Сумки BVLGARI": 435,
-    "Сумки Manolo Blahnik": 436,
-    "Обувь Alaïa": 437,
-    "BURBERRY": 438,
-    "Moncler": 439,
-    "Обвесы на сумку": 440,
-    "Кроссовки BALENCIAGA": 441,
-    "Обувь Chanel": 442,
-    "Обувь для пляжа и бассейна": 443,
-    "Женские сапоги": 444,
-    "Обувь Loro/Brunello/Kiton/Zegna": 445,
-    "Acne Studios": 446,
-    "CHROME HEARTS Украшения из серебра": 447,
-    "Сумки Chrome Hearts": 448,
-    "Товары для дома": 449,
-    "Сумки CELINE": 450,
-    "Лоферы Loro Piana": 451,
-    "Сумки Maison Margiela": 452,
-    "Сумки Acne Studios": 453,
-    "Сумки LEMAIRE": 454,
-    "Украшения (бижутерия)": 455,
-    "CANADA GOOSE": 456,
-    "Yves Saint Laurent": 457,
-    "AMI Paris": 458,
-    "Кроссовки LOEWE": 459,
-    "Кроссовки GUCCI": 460,
-    "Arcteryx": 461,
-    "GIVENCHY": 462,
-    "Классическая мужская одежда": 463,
-    "MAISON MARGIELA": 464,
-    "WELLDONE": 465,
-    "AMIRI": 466,
-    "Женская обувь II": 467,
-    "Сумки Roger Vivier": 468,
-    "Сумки Dolce Gabbana": 469,
-    "Сумки Alaïa": 470,
-    "Зимние куртки": 471,
-    "Обувь для детей": 472,
-    "Классическая мужская обувь из экзотической кожи": 473,
-    "Сумки Ralph Lauren": 474,
-    "Сумки MCM": 475,
-    "Max Mara": 476,
-    "Ассортимент": 477,
-    "Пальто": 478,
-    "alexander wang": 479,
-    "ENFANTS RICHES DEPRIMES": 480,
-    "Ювелирные украшения": 481,
-    "Обувь Louis Vuitton": 482,
-    "Сумки MOYNAT PARIS": 483,
-}
 
 TOPIC_MAP = {
     "сумки hermes": "Сумки Hermes",
@@ -284,11 +188,27 @@ async def get_channel_posts():
     await client.disconnect()
     return posts
 
+async def get_topic_id_from_name(topic_name):
+    """Получает реальный ID темы по её названию прямо из Telegram"""
+    try:
+        client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+        await client.connect()
+        group = await client.get_entity(TARGET_GROUP_ID)
+        async for topic in client.iter_forum_topics(group):
+            if topic.title == topic_name:
+                await client.disconnect()
+                return topic.id
+        await client.disconnect()
+        return None
+    except:
+        return None
+
 def send_to_topic(topic_name, text, photo_url=None):
-    thread_id = TOPIC_IDS.get(topic_name)
+    # Получаем актуальный ID темы
+    thread_id = asyncio.run(get_topic_id_from_name(topic_name))
     
     if not thread_id:
-        logger.warning(f"⚠️ Тема '{topic_name}' не найдена в словаре, отправляю в общий чат")
+        logger.warning(f"⚠️ Тема '{topic_name}' не найдена, отправляю в общий чат")
         thread_id = 1
 
     if photo_url:
@@ -296,7 +216,7 @@ def send_to_topic(topic_name, text, photo_url=None):
         files = {'photo': open(photo_url, 'rb')}
         payload = {
             "chat_id": TARGET_GROUP_ID,
-            "caption": f"📌 **{topic_name}**\n\n{text}",  # <-- ТЕПЕРЬ ТЕКСТ ДОБАВЛЕН
+            "caption": f"📌 **{topic_name}**\n\n{text}",
             "parse_mode": "Markdown",
             "message_thread_id": thread_id
         }
