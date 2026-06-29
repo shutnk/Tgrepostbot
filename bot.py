@@ -185,30 +185,46 @@ async def get_channel_albums():
         hash=0
     ))
     
-    grouped = {}
-    for msg in history.messages:
-        if msg.grouped_id:
-            if msg.grouped_id not in grouped:
-                grouped[msg.grouped_id] = []
-            grouped[msg.grouped_id].append(msg)
-    
-    for group_id, messages in grouped.items():
-        text = messages[-1].message or ""
-        photo_paths = []
-        for m in messages:
-            try:
-                path = await client.download_media(m, file=f"temp_{m.id}.jpg")
-                if path:
-                    photo_paths.append(path)
-            except:
-                pass
+    i = 0
+    while i < len(history.messages):
+        msg = history.messages[i]
         
-        if photo_paths and len(photo_paths) > 1:
-            albums.append({
-                "text": text,
-                "photo_paths": photo_paths
-            })
-            logger.info(f"📚 Найден альбом с {len(photo_paths)} разными фото")
+        # Если это одиночное фото — пропускаем (нам нужны только альбомы)
+        if not msg.grouped_id:
+            i += 1
+            continue
+        
+        # Собираем все сообщения с таким же grouped_id
+        album_msgs = [msg]
+        j = i + 1
+        while j < len(history.messages):
+            next_msg = history.messages[j]
+            if next_msg.grouped_id == msg.grouped_id:
+                album_msgs.append(next_msg)
+                j += 1
+            else:
+                break
+        
+        # Обрабатываем альбом
+        if len(album_msgs) > 1:
+            text = album_msgs[-1].message or ""
+            photo_paths = []
+            for m in album_msgs:
+                try:
+                    path = await client.download_media(m, file=f"temp_{m.id}.jpg")
+                    if path:
+                        photo_paths.append(path)
+                except:
+                    pass
+            
+            if photo_paths:
+                albums.append({
+                    "text": text,
+                    "photo_paths": photo_paths
+                })
+                logger.info(f"📚 Найден альбом с {len(photo_paths)} фото")
+        
+        i = j  # Переходим к следующему сообщению после альбома
     
     logger.info(f"✅ Загружено {len(albums)} альбомов")
     await client.disconnect()
@@ -224,7 +240,6 @@ def send_album_to_topic(topic_name, text, photo_paths):
         client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
         await client.connect()
         if photo_paths:
-            # ГЛАВНОЕ ИЗМЕНЕНИЕ: force_document=False + album=True
             await client.send_file(
                 TARGET_GROUP_ID,
                 file=photo_paths,
