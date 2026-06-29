@@ -186,20 +186,27 @@ async def get_channel_posts():
         hash=0
     ))
     for msg in reversed(history.messages):
-        if msg.photo or msg.document:
+        if msg.media:
             text = msg.message or ""
+            photo_paths = []
             try:
-                photo_path = await client.download_media(msg, file="temp_photo.jpg")
-                posts.append({"text": text, "photo_url": photo_path})
+                # Если это альбом, msg.media — это список
+                if isinstance(msg.media, list):
+                    for media_item in msg.media:
+                        path = await client.download_media(media_item, file="temp_photo.jpg")
+                        photo_paths.append(path)
+                else:
+                    path = await client.download_media(msg, file="temp_photo.jpg")
+                    photo_paths.append(path)
+                posts.append({"text": text, "photo_paths": photo_paths})
             except:
                 pass
     logger.info(f"✅ Загружено {len(posts)} постов из канала")
     await client.disconnect()
     return posts
 
-def send_to_topic(topic_name, text, photo_url=None):
+def send_album_to_topic(topic_name, text, photo_paths):
     thread_id = TOPIC_IDS.get(topic_name)
-    
     if not thread_id:
         logger.warning(f"⚠️ Тема '{topic_name}' не в TOPIC_IDS, отправляю в общий чат")
         thread_id = 1
@@ -207,27 +214,24 @@ def send_to_topic(topic_name, text, photo_url=None):
     async def send_telethon():
         client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
         await client.connect()
-        if photo_url:
+        # Если есть хотя бы одно фото
+        if photo_paths:
+            # Отправляем как альбом (album=True)
             await client.send_file(
                 TARGET_GROUP_ID,
-                file=photo_url,
+                file=photo_paths,
                 caption=f"📌 **{topic_name}**\n\n{text}",
                 parse_mode="markdown",
-                reply_to=thread_id
-            )
-        else:
-            await client.send_message(
-                TARGET_GROUP_ID,
-                f"📌 **{topic_name}**\n\n{text}",
-                reply_to=thread_id
+                reply_to=thread_id,
+                album=True
             )
         await client.disconnect()
     
     try:
         asyncio.run(send_telethon())
-        logger.info(f"📦 Отправлено через Telethon в {topic_name} (ID: {thread_id})")
+        logger.info(f"📚 Альбом ({len(photo_paths)} фото) отправлен в {topic_name} (ID: {thread_id})")
     except Exception as e:
-        logger.error(f"❌ Ошибка отправки через Telethon: {e}")
+        logger.error(f"❌ Ошибка отправки альбома: {e}")
 
 def main():
     logger.info("🚀 Запуск финального копирования...")
@@ -239,9 +243,10 @@ def main():
     for post in posts:
         text = replace_mentions(post["text"])
         topic = detect_topic(text)
-        photo = post["photo_url"]
-        send_to_topic(topic, text, photo)
-        time.sleep(5)  # Flood wait защита
+        photo_paths = post["photo_paths"]
+        if photo_paths:
+            send_album_to_topic(topic, text, photo_paths)
+            time.sleep(6)  # Flood wait защита
 
 if __name__ == "__main__":
     http_thread = threading.Thread(target=run_fake_server, daemon=True)
