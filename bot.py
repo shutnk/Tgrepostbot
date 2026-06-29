@@ -7,7 +7,6 @@ import logging
 import base64
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from bs4 import BeautifulSoup
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
 
@@ -22,6 +21,101 @@ API_HASH = '344583e45741c457fe1862106095a5eb'
 SESSION_FILE = 'session.session'
 SESSION_B64_FILE = 'session.b64'
 SOURCE_CHANNEL = '@blvckrooom'
+
+# === РУЧНОЙ СЛОВАРЬ ID ТЕМ (из твоих скриншотов) ===
+TOPIC_IDS = {
+    "Сумки Hermes": 392,
+    "Обувь Hermes": 394,
+    "Ремень Hermes": 386,
+    "Сумки CHANEL": 396,
+    "Chanel": 399,
+    "Женская одежда": 397,
+    "Сумки THE ROW": 398,
+    "Сумки MIU MIU": 400,
+    "Одежда для детей": 401,
+    "Сумки PRADA": 402,
+    "CHROME HEARTS": 403,
+    "Женская обувь": 404,
+    "Сумки YSL": 405,
+    "Женская верхняя одежда (Кожа, кашемир)": 406,
+    "Ремни": 407,
+    "Шарфы и шапки": 408,
+    "Одежда Loro/Brunello/Kiton/Zegna": 409,
+    "Очки": 410,
+    "Украшения Schiaparelli": 411,
+    "Сумки Schiaparelli": 412,
+    "Dolce&Gabbana": 413,
+    "Мужская верхняя одежда": 414,
+    "Купальники и пляжная одежда": 415,
+    "Сумки Loewe": 416,
+    "Сумки Loro Piana": 417,
+    "Сумки BOTTEGA VENETA": 418,
+    "Классическая мужская обувь": 419,
+    "Сумки Louis Vuitton": 420,
+    "ZIMMERMANN": 421,
+    "EXCLUSIVE": 422,
+    "Ralph Lauren": 423,
+    "BALENCIAGA": 424,
+    "FENDI": 425,
+    "GUCCI": 426,
+    "Сумки Jacquemus": 427,
+    "Сумки BALENCIAGA": 428,
+    "Кроссовки Louis Vuitton": 429,
+    "Кроссовки [LUXURY SNEAKERS]": 430,
+    "Сумки DIOR": 431,
+    "Сумки GOYARD": 432,
+    "Мужские сумки": 433,
+    "Чемоданы и дорожные сумки": 434,
+    "Сумки BVLGARI": 435,
+    "Сумки Manolo Blahnik": 436,
+    "Обувь Alaïa": 437,
+    "BURBERRY": 438,
+    "Moncler": 439,
+    "Обвесы на сумку": 440,
+    "Кроссовки BALENCIAGA": 441,
+    "Обувь Chanel": 442,
+    "Обувь для пляжа и бассейна": 443,
+    "Женские сапоги": 444,
+    "Обувь Loro/Brunello/Kiton/Zegna": 445,
+    "Acne Studios": 446,
+    "CHROME HEARTS Украшения из серебра": 447,
+    "Сумки Chrome Hearts": 448,
+    "Товары для дома": 449,
+    "Сумки CELINE": 450,
+    "Лоферы Loro Piana": 451,
+    "Сумки Maison Margiela": 452,
+    "Сумки Acne Studios": 453,
+    "Сумки LEMAIRE": 454,
+    "Украшения (бижутерия)": 455,
+    "CANADA GOOSE": 456,
+    "Yves Saint Laurent": 457,
+    "AMI Paris": 458,
+    "Кроссовки LOEWE": 459,
+    "Кроссовки GUCCI": 460,
+    "Arcteryx": 461,
+    "GIVENCHY": 462,
+    "Классическая мужская одежда": 463,
+    "MAISON MARGIELA": 464,
+    "WELLDONE": 465,
+    "AMIRI": 466,
+    "Женская обувь II": 467,
+    "Сумки Roger Vivier": 468,
+    "Сумки Dolce Gabbana": 469,
+    "Сумки Alaïa": 470,
+    "Зимние куртки": 471,
+    "Обувь для детей": 472,
+    "Классическая мужская обувь из экзотической кожи": 473,
+    "Сумки Ralph Lauren": 474,
+    "Сумки MCM": 475,
+    "Max Mara": 476,
+    "Ассортимент": 477,
+    "Пальто": 478,
+    "alexander wang": 479,
+    "ENFANTS RICHES DEPRIMES": 480,
+    "Ювелирные украшения": 481,
+    "Обувь Louis Vuitton": 482,
+    "Сумки MOYNAT PARIS": 483,
+}
 
 TOPIC_MAP = {
     "сумки hermes": "Сумки Hermes",
@@ -137,37 +231,6 @@ def run_fake_server():
     logger.info("✅ Фейковый HTTP-сервер запущен на порту 10000")
     server.serve_forever()
 
-def get_topic_ids_from_html():
-    url = f"https://t.me/s/{TARGET_GROUP_USERNAME}"
-    try:
-        resp = requests.get(url, timeout=20)
-        if resp.status_code != 200:
-            logger.error(f"❌ Не удалось загрузить страницу: {resp.status_code}")
-            return {}
-        
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        topic_ids = {}
-        
-        links = soup.find_all('a', href=re.compile(rf'/{TARGET_GROUP_USERNAME}/\d+'))
-        for link in links:
-            href = link.get('href')
-            match = re.search(rf'/{TARGET_GROUP_USERNAME}/(\d+)', href)
-            if match:
-                topic_id = int(match.group(1))
-                parent = link.find_parent('div', class_='tgme_widget_message')
-                if parent:
-                    text_div = parent.find('div', class_='tgme_widget_message_text')
-                    if text_div:
-                        topic_name = text_div.get_text().strip()
-                        if topic_name:
-                            topic_ids[topic_name] = topic_id
-        
-        logger.info(f"✅ Загружено ID тем из HTML: {list(topic_ids.keys())}")
-        return topic_ids
-    except Exception as e:
-        logger.error(f"❌ Ошибка парсинга тем: {e}")
-        return {}
-
 async def get_channel_posts():
     if not os.path.exists(SESSION_B64_FILE):
         logger.error(f"❌ Файл {SESSION_B64_FILE} не найден!")
@@ -222,11 +285,11 @@ async def get_channel_posts():
     return posts
 
 def send_to_topic(topic_name, text, photo_url=None):
-    topic_ids = get_topic_ids_from_html()
-    thread_id = topic_ids.get(topic_name)
+    # === БЕРЁМ ID ТЕМЫ ИЗ РУЧНОГО СЛОВАРЯ ===
+    thread_id = TOPIC_IDS.get(topic_name)
     
     if not thread_id:
-        logger.warning(f"⚠️ Тема '{topic_name}' не найдена, отправляю в общий чат")
+        logger.warning(f"⚠️ Тема '{topic_name}' не найдена в словаре, отправляю в общий чат")
         thread_id = 1
 
     if photo_url:
