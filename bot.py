@@ -177,7 +177,7 @@ async def get_channel_posts():
     posts = []
     history = await client(GetHistoryRequest(
         peer=channel,
-        limit=100,
+        limit=10,
         offset_date=0,
         offset_id=0,
         max_id=0,
@@ -186,27 +186,13 @@ async def get_channel_posts():
         hash=0
     ))
     for msg in reversed(history.messages):
-        if msg.message or msg.media:
+        if msg.photo or msg.document:
             text = msg.message or ""
-            photo_urls = []
-            if msg.media:
-                # Если это медиа-группа, получаем все фото через группу
-                if msg.grouped_id:
-                    group_messages = await client.get_messages(channel, limit=10, min_id=msg.id - 5)
-                    for g_msg in group_messages:
-                        if g_msg.grouped_id == msg.grouped_id and g_msg.photo:
-                            try:
-                                photo_path = await client.download_media(g_msg, file="temp_photo.jpg")
-                                photo_urls.append(photo_path)
-                            except:
-                                pass
-                else:
-                    try:
-                        photo_path = await client.download_media(msg, file="temp_photo.jpg")
-                        photo_urls.append(photo_path)
-                    except:
-                        pass
-            posts.append({"text": text, "photo_urls": photo_urls})
+            try:
+                photo_path = await client.download_media(msg, file="temp_photo.jpg")
+                posts.append({"text": text, "photo_url": photo_path})
+            except:
+                pass
     logger.info(f"✅ Загружено {len(posts)} постов из канала")
     await client.disconnect()
     return posts
@@ -253,9 +239,9 @@ def main():
     for post in posts:
         text = replace_mentions(post["text"])
         topic = detect_topic(text)
-        for photo_url in post["photo_urls"]:
-            send_to_topic(topic, text, photo_url)
-            time.sleep(2)
+        photo = post["photo_url"]
+        send_to_topic(topic, text, photo)
+        time.sleep(5)  # Flood wait защита
 
 if __name__ == "__main__":
     http_thread = threading.Thread(target=run_fake_server, daemon=True)
