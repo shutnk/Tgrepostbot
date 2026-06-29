@@ -30,6 +30,10 @@ TOPIC_IDS = {
 }
 
 TOPIC_MAP = {
+    "ralph lauren": "Ralph Lauren",
+    "fendi": "FENDI",
+    "gucci": "GUCCI",
+    "zimmermann": "ZIMMERMANN",
     "сумки hermes": "Ассортимент",
     "обувь hermes": "Ассортимент",
     "ремень hermes": "Ассортимент",
@@ -57,12 +61,8 @@ TOPIC_MAP = {
     "сумки bottega veneta": "Ассортимент",
     "классическая мужская обувь": "Ассортимент",
     "сумки louis vuitton": "Ассортимент",
-    "zimmermann": "ZIMMERMANN",
     "exclusive": "Ассортимент",
-    "ralph lauren": "Ralph Lauren",
     "balenciaga": "Ассортимент",
-    "fendi": "FENDI",
-    "gucci": "GUCCI",
     "сумки jacquemus": "Ассортимент",
     "сумки balenciaga": "Ассортимент",
     "кроссовки louis vuitton": "Ассортимент",
@@ -186,16 +186,25 @@ async def get_channel_posts():
         hash=0
     ))
     for msg in reversed(history.messages):
-        if msg.message:
-            text = msg.message
-            photo_url = None
+        if msg.message or msg.media:
+            text = msg.message or ""
+            photo_urls = []
             if msg.media:
-                try:
-                    photo_path = await client.download_media(msg, file="temp_photo.jpg")
-                    photo_url = photo_path
-                except:
-                    photo_url = None
-            posts.append({"text": text, "photo_url": photo_url})
+                # Если это альбом — качаем все фото
+                if isinstance(msg.media, list):
+                    for media_item in msg.media:
+                        try:
+                            photo_path = await client.download_media(media_item, file="temp_photo.jpg")
+                            photo_urls.append(photo_path)
+                        except:
+                            pass
+                else:
+                    try:
+                        photo_path = await client.download_media(msg, file="temp_photo.jpg")
+                        photo_urls.append(photo_path)
+                    except:
+                        pass
+            posts.append({"text": text, "photo_urls": photo_urls})
     logger.info(f"✅ Загружено {len(posts)} постов из канала")
     await client.disconnect()
     return posts
@@ -241,21 +250,32 @@ def main():
 
     for post in posts:
         text = replace_mentions(post["text"])
-        photo = post.get("photo_url")
+        photo_urls = post["photo_urls"]
         
-        # === РАЗБИВКА ПО ХЭШТЕГАМ ===
-        # Находим все #хэштеги в тексте
-        hashtags = re.findall(r'#(\w+)', text.lower())
-        if len(hashtags) >= 2:
-            # Если хэштегов больше одного — разбиваем текст по первому слову-бренду
-            # Просто отправляем каждый хэштег как отдельную тему
-            # (здесь можно добавить более сложную логику)
-            # Пока просто отправляем как есть, бот сам определит тему
-            pass
-        
-        topic = detect_topic(text)
-        send_to_topic(topic, text, photo)
-        time.sleep(3)
+        # Если есть несколько фото и несколько тем
+        if len(photo_urls) > 1:
+            # Разбиваем текст по хэштегам
+            hashtags = re.findall(r'#(\w+)', text.lower())
+            if len(hashtags) >= 2:
+                # Отправляем каждое фото с соответствующим описанием
+                for i, photo_url in enumerate(photo_urls):
+                    # Берём тему из хэштега
+                    topic = detect_topic(text)
+                    send_to_topic(topic, text, photo_url)
+                    logger.info(f"🖼️ Фото {i+1}/{len(photo_urls)} отправлено")
+                    time.sleep(2)
+            else:
+                # Если хэштегов мало — отправляем всё как есть
+                topic = detect_topic(text)
+                for photo_url in photo_urls:
+                    send_to_topic(topic, text, photo_url)
+                    time.sleep(2)
+        else:
+            # Обычный пост с одним фото
+            topic = detect_topic(text)
+            photo_url = photo_urls[0] if photo_urls else None
+            send_to_topic(topic, text, photo_url)
+            time.sleep(3)
 
 if __name__ == "__main__":
     http_thread = threading.Thread(target=run_fake_server, daemon=True)
