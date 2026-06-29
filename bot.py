@@ -2,12 +2,9 @@ import os
 import re
 import time
 import asyncio
-import requests
-import json
 import logging
 import base64
 import threading
-import random
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
@@ -17,7 +14,6 @@ logger = logging.getLogger(__name__)
 
 TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
 TARGET_GROUP_ID = -1003991874844
-
 MENTION_REPLACE = '@esen_baevich'
 
 API_ID = 17349
@@ -121,21 +117,20 @@ async def get_channel_albums():
         
         if len(album_msgs) > 1:
             text = album_msgs[-1].message or ""
-            unique_photo_paths = []
+            photo_paths = []
             for m in album_msgs:
                 try:
                     path = await client.download_media(m, file=f"temp_{m.id}.jpg")
-                    if path:
-                        unique_photo_paths.append(path)
+                    photo_paths.append(path)
                 except:
                     pass
             
-            if unique_photo_paths:
+            if photo_paths:
                 albums.append({
                     "text": text,
-                    "photo_paths": unique_photo_paths
+                    "photo_paths": photo_paths
                 })
-                logger.info(f"📚 Найден альбом с {len(unique_photo_paths)} уникальными фото")
+                logger.info(f"📚 Найден альбом с {len(photo_paths)} фото")
         
         i = j
     
@@ -143,71 +138,34 @@ async def get_channel_albums():
     await client.disconnect()
     return albums
 
-def cleanup_topic(topic_name):
-    thread_id = TOPIC_IDS.get(topic_name, 1)
-    url = f"https://api.telegram.org/bot{TOKEN}/getChatHistory"
-    params = {
-        "chat_id": TARGET_GROUP_ID,
-        "limit": 10,
-        "message_thread_id": thread_id
-    }
-    try:
-        resp = requests.get(url, params=params, timeout=10)
-        data = resp.json()
-        if data.get("ok"):
-            messages = data.get("result", {}).get("messages", [])
-            for msg in messages:
-                if msg.get("from", {}).get("is_bot"):
-                    del_url = f"https://api.telegram.org/bot{TOKEN}/deleteMessage"
-                    del_payload = {
-                        "chat_id": TARGET_GROUP_ID,
-                        "message_id": msg["message_id"]
-                    }
-                    requests.post(del_url, data=del_payload)
-                    logger.info(f"🗑️ Удалён старый пост (ID: {msg['message_id']})")
-    except:
-        pass
-
 def send_album_to_topic(topic_name, text, photo_paths):
     thread_id = TOPIC_IDS.get(topic_name)
     if not thread_id:
         logger.warning(f"⚠️ Тема '{topic_name}' не найдена, отправляю в общий чат")
         thread_id = 1
 
-    # 1. Сначала чистим тему от старых постов
-    cleanup_topic(topic_name)
-
-    # 2. Генерируем уникальный ID для альбома (Telegram склеит по нему)
-    group_id = random.randint(1000000, 9999999)
+    async def send_telethon():
+        client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+        await client.connect()
+        if photo_paths:
+            await client.send_file(
+                TARGET_GROUP_ID,
+                file=photo_paths,
+                caption=f"📌 **{topic_name}**\n\n{text}",
+                parse_mode="markdown",
+                message_thread_id=thread_id,
+                album=True
+            )
+        await client.disconnect()
     
-    # 3. Отправляем каждое фото как отдельное сообщение, но с одинаковым group_id
-    for i, path in enumerate(photo_paths):
-        url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
-        files = {'photo': open(path, 'rb')}
-        data = {
-            "chat_id": TARGET_GROUP_ID,
-            "message_thread_id": thread_id,
-        }
-        # Добавляем подпись только к первому фото
-        if i == 0:
-            data["caption"] = f"📌 **{topic_name}**\n\n{text}"
-            data["parse_mode"] = "Markdown"
-        
-        # Секретный ингредиент: media_group_id заставляет Telegram склеить фото
-        if len(photo_paths) > 1:
-            data["media_group_id"] = group_id
-        
-        try:
-            requests.post(url, files=files, data=data, timeout=30)
-            logger.info(f"📸 Отправлено фото {i+1}/{len(photo_paths)} в {topic_name}")
-            time.sleep(0.5)
-        except Exception as e:
-            logger.error(f"❌ Ошибка отправки фото {i+1}: {e}")
-
-    logger.info(f"📚 Альбом ({len(photo_paths)} фото) отправлен в {topic_name} (ID: {thread_id})")
+    try:
+        asyncio.run(send_telethon())
+        logger.info(f"📚 Альбом ({len(photo_paths)} фото) отправлен в {topic_name} (ID: {thread_id})")
+    except Exception as e:
+        logger.error(f"❌ Ошибка отправки альбома: {e}")
 
 def main():
-    logger.info("🚀 Запуск Супер-бота (альбомы с group_id)...")
+    logger.info("🚀 Запуск финального копирования...")
     albums = asyncio.run(get_channel_albums())
     if not albums:
         logger.info("Альбомов не найдено.")
