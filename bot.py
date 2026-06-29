@@ -174,10 +174,11 @@ async def get_channel_posts():
         logger.error(f"❌ Не удалось получить канал: {e}")
         return []
 
-    posts = []
+    # Сначала собираем все ID альбомов
+    album_groups = {}
     history = await client(GetHistoryRequest(
         peer=channel,
-        limit=10,
+        limit=20,
         offset_date=0,
         offset_id=0,
         max_id=0,
@@ -185,23 +186,38 @@ async def get_channel_posts():
         add_offset=0,
         hash=0
     ))
-    for msg in reversed(history.messages):
-        if msg.media:
-            text = msg.message or ""
-            photo_paths = []
-            try:
-                # Если это альбом, msg.media — это список
-                if isinstance(msg.media, list):
-                    for media_item in msg.media:
-                        path = await client.download_media(media_item, file="temp_photo.jpg")
-                        photo_paths.append(path)
-                else:
-                    path = await client.download_media(msg, file="temp_photo.jpg")
+    for msg in history.messages:
+        if msg.grouped_id:
+            if msg.grouped_id not in album_groups:
+                album_groups[msg.grouped_id] = []
+            album_groups[msg.grouped_id].append(msg)
+    
+    posts = []
+    # Обрабатываем альбомы
+    for group_id, messages in album_groups.items():
+        # Берём текст из первого сообщения альбома
+        text = messages[0].message or ""
+        photo_paths = []
+        for m in messages:
+            if m.photo:
+                try:
+                    path = await client.download_media(m, file="temp_photo.jpg")
                     photo_paths.append(path)
-                posts.append({"text": text, "photo_paths": photo_paths})
+                except:
+                    pass
+        if photo_paths:
+            posts.append({"text": text, "photo_paths": photo_paths})
+    
+    # Обрабатываем одиночные фото (без grouped_id)
+    for msg in history.messages:
+        if msg.photo and not msg.grouped_id:
+            try:
+                path = await client.download_media(msg, file="temp_photo.jpg")
+                posts.append({"text": msg.message or "", "photo_paths": [path]})
             except:
                 pass
-    logger.info(f"✅ Загружено {len(posts)} постов из канала")
+    
+    logger.info(f"✅ Загружено {len(posts)} постов/альбомов из канала")
     await client.disconnect()
     return posts
 
@@ -214,9 +230,7 @@ def send_album_to_topic(topic_name, text, photo_paths):
     async def send_telethon():
         client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
         await client.connect()
-        # Если есть хотя бы одно фото
         if photo_paths:
-            # Отправляем как альбом (album=True)
             await client.send_file(
                 TARGET_GROUP_ID,
                 file=photo_paths,
@@ -246,7 +260,7 @@ def main():
         photo_paths = post["photo_paths"]
         if photo_paths:
             send_album_to_topic(topic, text, photo_paths)
-            time.sleep(6)  # Flood wait защита
+            time.sleep(6)
 
 if __name__ == "__main__":
     http_thread = threading.Thread(target=run_fake_server, daemon=True)
