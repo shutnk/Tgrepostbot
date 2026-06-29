@@ -193,11 +193,11 @@ async def get_channel_posts():
     
     posts = []
     for group_id, messages in album_groups.items():
-        # ТЕКСТ БЕРЁМ ИЗ ПОСЛЕДНЕГО СООБЩЕНИЯ
         text = messages[-1].message or ""
         photo_paths = set()
         for m in messages:
-            if m.photo:
+            # === ИСПРАВЛЕНИЕ: принимаем и photo, и document ===
+            if m.photo or m.document:
                 try:
                     path = await client.download_media(m, file="temp_photo.jpg")
                     photo_paths.add(path)
@@ -207,7 +207,7 @@ async def get_channel_posts():
             posts.append({"text": text, "photo_paths": list(photo_paths)})
     
     for msg in history.messages:
-        if msg.photo and not msg.grouped_id:
+        if (msg.photo or msg.document) and not msg.grouped_id:
             try:
                 path = await client.download_media(msg, file="temp_photo.jpg")
                 posts.append({"text": msg.message or "", "photo_paths": [path]})
