@@ -112,12 +112,10 @@ async def get_channel_albums():
     while i < len(history.messages):
         current = history.messages[i]
         
-        # Пропускаем одиночные сообщения
         if not current.photo:
             i += 1
             continue
         
-        # Собираем все фото, опубликованные с интервалом < 5 секунд
         album_msgs = [current]
         j = i + 1
         while j < len(history.messages):
@@ -129,7 +127,6 @@ async def get_channel_albums():
             else:
                 break
         
-        # Если собрали больше одного фото — это альбом
         if len(album_msgs) > 1:
             text = album_msgs[-1].message or ""
             unique_photo_paths = set()
@@ -148,7 +145,7 @@ async def get_channel_albums():
                 })
                 logger.info(f"📚 Найден альбом с {len(unique_photo_paths)} уникальными фото")
         
-        i = j  # Переходим к следующей группе сообщений
+        i = j
     
     logger.info(f"✅ Загружено {len(albums)} альбомов")
     await client.disconnect()
@@ -161,23 +158,27 @@ def send_album_to_topic(topic_name, text, photo_paths):
         thread_id = 1
 
     url = f"https://api.telegram.org/bot{TOKEN}/sendMediaGroup"
+    
     media = []
     for i, path in enumerate(photo_paths):
-        with open(path, 'rb') as f:
-            media_item = {"type": "photo", "media": f}
-            if i == 0:
-                media_item["caption"] = f"📌 **{topic_name}**\n\n{text}"
-                media_item["parse_mode"] = "Markdown"
-            media.append(media_item)
+        media_item = {"type": "photo", "media": f"attach://photo{i}.jpg"}
+        if i == 0:
+            media_item["caption"] = f"📌 **{topic_name}**\n\n{text}"
+            media_item["parse_mode"] = "Markdown"
+        media.append(media_item)
     
     if media:
+        files = {}
+        for i, path in enumerate(photo_paths):
+            files[f"photo{i}.jpg"] = open(path, 'rb')
+        
         payload = {
             "chat_id": TARGET_GROUP_ID,
-            "media": media,
+            "media": json.dumps(media),
             "message_thread_id": thread_id
         }
         try:
-            requests.post(url, json=payload, timeout=15)
+            requests.post(url, data=payload, files=files, timeout=30)
             logger.info(f"📚 Альбом ({len(media)} фото) отправлен в {topic_name} (ID: {thread_id})")
         except Exception as e:
             logger.error(f"❌ Ошибка отправки альбома: {e}")
