@@ -4,7 +4,6 @@ import re
 import logging
 import os
 import base64
-import io
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telethon import TelegramClient
@@ -159,10 +158,9 @@ async def copy_posts():
         logger.error(f"❌ Не удалось получить канал: {e}")
         return
 
-    # === ПОЛУЧАЕМ ВСЕХ УЧАСТНИКОВ И ФИЛЬТРУЕМ ВРУЧНУЮ ===
     try:
         group = await client.get_entity(TARGET_GROUP)
-        participants = await client.get_participants(group)  # БЕЗ фильтра
+        participants = await client.get_participants(group)
         topic_ids = {}
         for p in participants:
             if hasattr(p, 'topic_id') and p.topic_id:
@@ -198,28 +196,29 @@ async def copy_posts():
                     
                     if msg.media:
                         try:
-                            media_bytes = await client.download_media(msg, file=io.BytesIO())
+                            # Скачиваем фото во временный файл
+                            temp_file = await client.download_media(msg, file="temp_photo.jpg")
                             await client.send_file(
                                 TARGET_GROUP,
-                                file=media_bytes,
+                                file=temp_file,
                                 caption=f"📌 **{topic}**\n\n{new_text}",
-                                reply_to=thread_id,
                                 parse_mode="markdown"
                             )
+                            # Удаляем временный файл
+                            if os.path.exists(temp_file):
+                                os.remove(temp_file)
                             logger.info(f"📸 Фото отправлено в {topic}")
                         except Exception as e:
                             logger.error(f"❌ Ошибка отправки фото: {e}")
                             await client.send_message(
                                 TARGET_GROUP,
-                                f"📌 **{topic}**\n\n{new_text}",
-                                reply_to=thread_id
+                                f"📌 **{topic}**\n\n{new_text}"
                             )
                             logger.info(f"📝 Текст отправлен в {topic}")
                     else:
                         await client.send_message(
                             TARGET_GROUP,
-                            f"📌 **{topic}**\n\n{new_text}",
-                            reply_to=thread_id
+                            f"📌 **{topic}**\n\n{new_text}"
                         )
                         logger.info(f"📝 Текст отправлен в {topic}")
                     
