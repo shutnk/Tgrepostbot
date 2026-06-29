@@ -10,6 +10,10 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
 
+# === СОЗДАЁМ LOGGER В САМОМ НАЧАЛЕ ===
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
 TARGET_GROUP_ID = -1003991874844
 
@@ -146,7 +150,6 @@ async def get_channel_albums():
     return albums
 
 def cleanup_old_duplicates(topic_name, new_text):
-    """Удаляет старые сообщения бота в этой теме, похожие на новое"""
     thread_id = TOPIC_IDS.get(topic_name, 1)
     
     try:
@@ -164,11 +167,8 @@ def cleanup_old_duplicates(topic_name, new_text):
         
         messages = data.get("result", {}).get("messages", [])
         for msg in messages:
-            # Проверяем, что сообщение от бота
             if msg.get("from", {}).get("is_bot"):
-                # Если текст похож или есть фото
                 if "caption" in msg and new_text in msg["caption"]:
-                    # Удаляем
                     del_url = f"https://api.telegram.org/bot{TOKEN}/deleteMessage"
                     del_payload = {
                         "chat_id": TARGET_GROUP_ID,
@@ -185,7 +185,6 @@ def send_album_to_topic(topic_name, text, photos):
         logger.warning(f"⚠️ Тема '{topic_name}' не найдена, отправляю в общий чат")
         thread_id = 1
 
-    # Сначала удаляем старые дубликаты
     cleanup_old_duplicates(topic_name, text)
 
     url = f"https://api.telegram.org/bot{TOKEN}/sendMediaGroup"
