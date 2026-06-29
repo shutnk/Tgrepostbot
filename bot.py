@@ -5,6 +5,8 @@ import logging
 import os
 import base64
 import io
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
 
@@ -119,6 +121,19 @@ def detect_topic(text):
 def replace_mentions(text):
     return re.sub(r'@\w+', MENTION_REPLACE, text)
 
+# === ФЕЙКОВЫЙ HTTP-СЕРВЕР (чтобы Render не убивал процесс) ===
+class FakeHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running!")
+
+def run_fake_server():
+    server = HTTPServer(("0.0.0.0", 10000), FakeHandler)
+    logger.info("✅ Фейковый HTTP-сервер запущен на порту 10000")
+    server.serve_forever()
+
+# === ОСНОВНОЙ ЦИКЛ КОПИРОВАНИЯ ===
 async def copy_posts():
     if not os.path.exists(SESSION_B64_FILE):
         logger.error(f"❌ Файл {SESSION_B64_FILE} не найден!")
@@ -146,18 +161,9 @@ async def copy_posts():
         logger.error(f"❌ Не удалось получить канал: {e}")
         return
 
-    # === ОБХОД ИМПОРТА: создаём запрос вручную ===
     try:
         group = await client.get_entity(TARGET_GROUP)
-        # Создаём объект запроса через строку
-        GetForumTopics = client.__class__.__dict__['channels'].GetForumTopics
-        result = await client(GetForumTopics(
-            channel=group,
-            offset_date=0,
-            offset_id=0,
-            offset_topic=0,
-            limit=100
-        ))
+        result = await client.get_forum_topics(group)
         topic_ids = {t.title: t.id for t in result.topics}
         logger.info(f"✅ Загружено ID тем: {list(topic_ids.keys())}")
     except Exception as e:
@@ -224,8 +230,13 @@ async def copy_posts():
             await asyncio.sleep(10)
 
 async def main():
-    logger.info("🚀 Запуск финального копирования (с фото и темами)...")
+    logger.info("🚀 Запуск финального копирования...")
     await copy_posts()
 
 if __name__ == "__main__":
+    # Запускаем фейковый сервер в отдельном потоке
+    http_thread = threading.Thread(target=run_fake_server, daemon=True)
+    http_thread.start()
+    
+    # Запускаем основной цикл
     asyncio.run(main())
