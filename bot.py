@@ -3,9 +3,11 @@ import re
 import time
 import asyncio
 import requests
+import json
 import logging
 import base64
 import threading
+import random
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
@@ -35,24 +37,14 @@ TOPIC_IDS = {
 def detect_topic(text):
     if not text:
         return "Ассортимент"
-    
-    hashtags = re.findall(r'#(\w+)', text.lower())
-    
-    if 'prada' in hashtags:
-        return "Ассортимент"
-    if 'ralph lauren' in hashtags or 'ralphlauren' in hashtags:
-        return "Ralph Lauren"
-    if 'gucci' in hashtags:
-        return "GUCCI"
-    if 'fendi' in hashtags:
-        return "FENDI"
-    if 'zimmermann' in hashtags:
-        return "ZIMMERMANN"
-    if 'hermes' in hashtags:
-        return "Ассортимент"
-    if 'chanel' in hashtags:
-        return "Ассортимент"
-    
+    text_lower = text.lower()
+    if 'prada' in text_lower: return "Ассортимент"
+    if 'ralph lauren' in text_lower or 'ralphlauren' in text_lower: return "Ralph Lauren"
+    if 'gucci' in text_lower: return "GUCCI"
+    if 'fendi' in text_lower: return "FENDI"
+    if 'zimmermann' in text_lower: return "ZIMMERMANN"
+    if 'hermes' in text_lower: return "Ассортимент"
+    if 'chanel' in text_lower: return "Ассортимент"
     return "Ассортимент"
 
 def replace_mentions(text):
@@ -129,19 +121,19 @@ async def get_channel_albums():
         
         if len(album_msgs) > 1:
             text = album_msgs[-1].message or ""
-            unique_photo_paths = set()
+            unique_photo_paths = []
             for m in album_msgs:
                 try:
                     path = await client.download_media(m, file=f"temp_{m.id}.jpg")
                     if path:
-                        unique_photo_paths.add(path)
+                        unique_photo_paths.append(path)
                 except:
                     pass
             
             if unique_photo_paths:
                 albums.append({
                     "text": text,
-                    "photo_paths": list(unique_photo_paths)
+                    "photo_paths": unique_photo_paths
                 })
                 logger.info(f"📚 Найден альбом с {len(unique_photo_paths)} уникальными фото")
         
@@ -151,40 +143,71 @@ async def get_channel_albums():
     await client.disconnect()
     return albums
 
+def cleanup_topic(topic_name):
+    thread_id = TOPIC_IDS.get(topic_name, 1)
+    url = f"https://api.telegram.org/bot{TOKEN}/getChatHistory"
+    params = {
+        "chat_id": TARGET_GROUP_ID,
+        "limit": 10,
+        "message_thread_id": thread_id
+    }
+    try:
+        resp = requests.get(url, params=params, timeout=10)
+        data = resp.json()
+        if data.get("ok"):
+            messages = data.get("result", {}).get("messages", [])
+            for msg in messages:
+                if msg.get("from", {}).get("is_bot"):
+                    del_url = f"https://api.telegram.org/bot{TOKEN}/deleteMessage"
+                    del_payload = {
+                        "chat_id": TARGET_GROUP_ID,
+                        "message_id": msg["message_id"]
+                    }
+                    requests.post(del_url, data=del_payload)
+                    logger.info(f"🗑️ Удалён старый пост (ID: {msg['message_id']})")
+    except:
+        pass
+
 def send_album_to_topic(topic_name, text, photo_paths):
     thread_id = TOPIC_IDS.get(topic_name)
     if not thread_id:
         logger.warning(f"⚠️ Тема '{topic_name}' не найдена, отправляю в общий чат")
         thread_id = 1
 
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMediaGroup"
+    # 1. Сначала чистим тему от старых постов
+    cleanup_topic(topic_name)
+
+    # 2. Генерируем уникальный ID для альбома (Telegram склеит по нему)
+    group_id = random.randint(1000000, 9999999)
     
-    media = []
+    # 3. Отправляем каждое фото как отдельное сообщение, но с одинаковым group_id
     for i, path in enumerate(photo_paths):
-        media_item = {"type": "photo", "media": f"attach://photo{i}.jpg"}
-        if i == 0:
-            media_item["caption"] = f"📌 **{topic_name}**\n\n{text}"
-            media_item["parse_mode"] = "Markdown"
-        media.append(media_item)
-    
-    if media:
-        files = {}
-        for i, path in enumerate(photo_paths):
-            files[f"photo{i}.jpg"] = open(path, 'rb')
-        
-        payload = {
+        url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
+        files = {'photo': open(path, 'rb')}
+        data = {
             "chat_id": TARGET_GROUP_ID,
-            "media": json.dumps(media),
-            "message_thread_id": thread_id
+            "message_thread_id": thread_id,
         }
+        # Добавляем подпись только к первому фото
+        if i == 0:
+            data["caption"] = f"📌 **{topic_name}**\n\n{text}"
+            data["parse_mode"] = "Markdown"
+        
+        # Секретный ингредиент: media_group_id заставляет Telegram склеить фото
+        if len(photo_paths) > 1:
+            data["media_group_id"] = group_id
+        
         try:
-            requests.post(url, data=payload, files=files, timeout=30)
-            logger.info(f"📚 Альбом ({len(media)} фото) отправлен в {topic_name} (ID: {thread_id})")
+            requests.post(url, files=files, data=data, timeout=30)
+            logger.info(f"📸 Отправлено фото {i+1}/{len(photo_paths)} в {topic_name}")
+            time.sleep(0.5)
         except Exception as e:
-            logger.error(f"❌ Ошибка отправки альбома: {e}")
+            logger.error(f"❌ Ошибка отправки фото {i+1}: {e}")
+
+    logger.info(f"📚 Альбом ({len(photo_paths)} фото) отправлен в {topic_name} (ID: {thread_id})")
 
 def main():
-    logger.info("🚀 Запуск финального копирования...")
+    logger.info("🚀 Запуск Супер-бота (альбомы с group_id)...")
     albums = asyncio.run(get_channel_albums())
     if not albums:
         logger.info("Альбомов не найдено.")
