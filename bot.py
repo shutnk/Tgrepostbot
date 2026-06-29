@@ -174,7 +174,6 @@ async def get_channel_posts():
         logger.error(f"❌ Не удалось получить канал: {e}")
         return []
 
-    # Сначала собираем все ID альбомов
     album_groups = {}
     history = await client(GetHistoryRequest(
         peer=channel,
@@ -193,22 +192,20 @@ async def get_channel_posts():
             album_groups[msg.grouped_id].append(msg)
     
     posts = []
-    # Обрабатываем альбомы
     for group_id, messages in album_groups.items():
-        # Берём текст из первого сообщения альбома
-        text = messages[0].message or ""
-        photo_paths = []
+        # ТЕКСТ БЕРЁМ ИЗ ПОСЛЕДНЕГО СООБЩЕНИЯ
+        text = messages[-1].message or ""
+        photo_paths = set()
         for m in messages:
             if m.photo:
                 try:
                     path = await client.download_media(m, file="temp_photo.jpg")
-                    photo_paths.append(path)
+                    photo_paths.add(path)
                 except:
                     pass
         if photo_paths:
-            posts.append({"text": text, "photo_paths": photo_paths})
+            posts.append({"text": text, "photo_paths": list(photo_paths)})
     
-    # Обрабатываем одиночные фото (без grouped_id)
     for msg in history.messages:
         if msg.photo and not msg.grouped_id:
             try:
