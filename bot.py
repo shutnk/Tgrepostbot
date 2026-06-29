@@ -185,7 +185,6 @@ async def get_channel_albums():
         hash=0
     ))
     
-    # Группируем по grouped_id
     grouped = {}
     for msg in history.messages:
         if msg.grouped_id:
@@ -194,12 +193,10 @@ async def get_channel_albums():
             grouped[msg.grouped_id].append(msg)
     
     for group_id, messages in grouped.items():
-        # БЕРЁМ ТЕКСТ ИЗ ПОСЛЕДНЕГО СООБЩЕНИЯ В АЛЬБОМЕ
         text = messages[-1].message or ""
         photo_paths = []
         for m in messages:
             try:
-                # СКАЧИВАЕМ КАЖДОЕ ФОТО ИЗ КАЖДОГО СООБЩЕНИЯ
                 path = await client.download_media(m, file=f"temp_{m.id}.jpg")
                 if path:
                     photo_paths.append(path)
@@ -227,12 +224,14 @@ def send_album_to_topic(topic_name, text, photo_paths):
         client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
         await client.connect()
         if photo_paths:
+            # ГЛАВНОЕ ИЗМЕНЕНИЕ: force_document=False + album=True
             await client.send_file(
                 TARGET_GROUP_ID,
                 file=photo_paths,
                 caption=f"📌 **{topic_name}**\n\n{text}",
                 parse_mode="markdown",
                 reply_to=thread_id,
+                force_document=False,
                 album=True
             )
         await client.disconnect()
