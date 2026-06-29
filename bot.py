@@ -22,7 +22,7 @@ SESSION_FILE = 'session.session'
 SESSION_B64_FILE = 'session.b64'
 SOURCE_CHANNEL = '@blvckrooom'
 
-# === РУЧНОЙ СЛОВАРЬ ID ТЕМ (из твоих скриншотов) ===
+# === РУЧНОЕ СООТВЕТСТВИЕ ТЕМ ===
 TOPIC_IDS = {
     "Сумки Hermes": 392,
     "Обувь Hermes": 394,
@@ -285,7 +285,6 @@ async def get_channel_posts():
     return posts
 
 def send_to_topic(topic_name, text, photo_url=None):
-    # === БЕРЁМ ID ТЕМЫ ИЗ РУЧНОГО СЛОВАРЯ ===
     thread_id = TOPIC_IDS.get(topic_name)
     
     if not thread_id:
@@ -297,12 +296,12 @@ def send_to_topic(topic_name, text, photo_url=None):
         files = {'photo': open(photo_url, 'rb')}
         payload = {
             "chat_id": TARGET_GROUP_ID,
-            "caption": f"📌 **{topic_name}**\n\n{text}",
+            "caption": f"📌 **{topic_name}**\n\n{text}",  # <-- ТЕПЕРЬ ТЕКСТ ДОБАВЛЕН
             "parse_mode": "Markdown",
             "message_thread_id": thread_id
         }
         requests.post(url, files=files, data=payload)
-        logger.info(f"📸 Фото отправлено в {topic_name} (ID: {thread_id})")
+        logger.info(f"📸 Фото + текст отправлено в {topic_name} (ID: {thread_id})")
     else:
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
         payload = {
