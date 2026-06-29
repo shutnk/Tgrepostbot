@@ -10,7 +10,6 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
 
-# === СОЗДАЁМ LOGGER В САМОМ НАЧАЛЕ ===
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -109,96 +108,63 @@ async def get_channel_albums():
         hash=0
     ))
     
-    grouped = {}
-    for msg in history.messages:
-        if msg.grouped_id:
-            if msg.grouped_id not in grouped:
-                grouped[msg.grouped_id] = []
-            grouped[msg.grouped_id].append(msg)
-    
-    for group_id, messages in grouped.items():
-        text = messages[-1].message or ""
-        photo_urls = []
-        for m in messages:
-            if m.photo or m.document:
-                if m.photo:
-                    photo_urls.append(m.photo)
-                elif m.document:
-                    photo_urls.append(m.document)
+    i = 0
+    while i < len(history.messages):
+        current = history.messages[i]
         
-        unique_photos = []
-        seen = set()
-        for p in photo_urls:
-            if hasattr(p, 'file_id'):
-                if p.file_id not in seen:
-                    seen.add(p.file_id)
-                    unique_photos.append(p)
-            elif hasattr(p, 'id'):
-                if p.id not in seen:
-                    seen.add(p.id)
-                    unique_photos.append(p)
+        # Пропускаем одиночные сообщения
+        if not current.photo:
+            i += 1
+            continue
         
-        if unique_photos:
-            albums.append({
-                "text": text,
-                "photos": unique_photos
-            })
-            logger.info(f"📚 Найден альбом с {len(unique_photos)} уникальными фото")
+        # Собираем все фото, опубликованные с интервалом < 5 секунд
+        album_msgs = [current]
+        j = i + 1
+        while j < len(history.messages):
+            next_msg = history.messages[j]
+            time_diff = abs(next_msg.date - current.date)
+            if next_msg.photo and time_diff.total_seconds() < 5:
+                album_msgs.append(next_msg)
+                j += 1
+            else:
+                break
+        
+        # Если собрали больше одного фото — это альбом
+        if len(album_msgs) > 1:
+            text = album_msgs[-1].message or ""
+            unique_photo_paths = set()
+            for m in album_msgs:
+                try:
+                    path = await client.download_media(m, file=f"temp_{m.id}.jpg")
+                    if path:
+                        unique_photo_paths.add(path)
+                except:
+                    pass
+            
+            if unique_photo_paths:
+                albums.append({
+                    "text": text,
+                    "photo_paths": list(unique_photo_paths)
+                })
+                logger.info(f"📚 Найден альбом с {len(unique_photo_paths)} уникальными фото")
+        
+        i = j  # Переходим к следующей группе сообщений
     
     logger.info(f"✅ Загружено {len(albums)} альбомов")
     await client.disconnect()
     return albums
 
-def cleanup_old_duplicates(topic_name, new_text):
-    thread_id = TOPIC_IDS.get(topic_name, 1)
-    
-    try:
-        url = f"https://api.telegram.org/bot{TOKEN}/getChatHistory"
-        payload = {
-            "chat_id": TARGET_GROUP_ID,
-            "limit": 10,
-            "message_thread_id": thread_id
-        }
-        resp = requests.get(url, params=payload, timeout=10)
-        data = resp.json()
-        
-        if not data.get("ok"):
-            return
-        
-        messages = data.get("result", {}).get("messages", [])
-        for msg in messages:
-            if msg.get("from", {}).get("is_bot"):
-                if "caption" in msg and new_text in msg["caption"]:
-                    del_url = f"https://api.telegram.org/bot{TOKEN}/deleteMessage"
-                    del_payload = {
-                        "chat_id": TARGET_GROUP_ID,
-                        "message_id": msg["message_id"]
-                    }
-                    requests.post(del_url, data=del_payload)
-                    logger.info(f"🗑️ Удалён старый дубликат (ID: {msg['message_id']})")
-    except Exception as e:
-        logger.error(f"❌ Ошибка очистки дубликатов: {e}")
-
-def send_album_to_topic(topic_name, text, photos):
+def send_album_to_topic(topic_name, text, photo_paths):
     thread_id = TOPIC_IDS.get(topic_name)
     if not thread_id:
         logger.warning(f"⚠️ Тема '{topic_name}' не найдена, отправляю в общий чат")
         thread_id = 1
 
-    cleanup_old_duplicates(topic_name, text)
-
     url = f"https://api.telegram.org/bot{TOKEN}/sendMediaGroup"
-    
     media = []
-    for i, photo in enumerate(photos):
-        file_id = None
-        if hasattr(photo, 'file_id'):
-            file_id = photo.file_id
-        elif hasattr(photo, 'id'):
-            file_id = photo.id
-        
-        if file_id:
-            media_item = {"type": "photo", "media": file_id}
+    for i, path in enumerate(photo_paths):
+        with open(path, 'rb') as f:
+            media_item = {"type": "photo", "media": f}
             if i == 0:
                 media_item["caption"] = f"📌 **{topic_name}**\n\n{text}"
                 media_item["parse_mode"] = "Markdown"
@@ -217,7 +183,7 @@ def send_album_to_topic(topic_name, text, photos):
             logger.error(f"❌ Ошибка отправки альбома: {e}")
 
 def main():
-    logger.info("🚀 Запуск финального копирования (с очисткой дубликатов)...")
+    logger.info("🚀 Запуск финального копирования...")
     albums = asyncio.run(get_channel_albums())
     if not albums:
         logger.info("Альбомов не найдено.")
@@ -226,8 +192,8 @@ def main():
     for album in albums:
         text = replace_mentions(album["text"])
         topic = detect_topic(text)
-        photos = album["photos"]
-        send_album_to_topic(topic, text, photos)
+        photo_paths = album["photo_paths"]
+        send_album_to_topic(topic, text, photo_paths)
         time.sleep(6)
 
 if __name__ == "__main__":
