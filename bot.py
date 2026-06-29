@@ -187,17 +187,13 @@ async def get_channel_albums():
     
     for msg in history.messages:
         if msg.media and not msg.grouped_id:
-            # Одиночные фото — игнорируем
             continue
         if msg.grouped_id:
-            # Это сообщение входит в альбом
-            # Но чтобы не дублировать, мы обработаем только первое сообщение с этим grouped_id
             if msg.grouped_id in [a.get("grouped_id") for a in albums]:
                 continue
             
             text = msg.message or ""
             photo_paths = []
-            # Собираем все фото из этого альбома
             for m in history.messages:
                 if m.grouped_id == msg.grouped_id and (m.photo or m.document):
                     try:
@@ -238,7 +234,7 @@ def send_album_to_topic(topic_name, text, photo_paths):
         await client.disconnect()
     
     try:
-        asyncio.run(send_telethon())
+        await send_telethon()  # <-- ДОБАВЛЕН await
         logger.info(f"📚 Альбом ({len(photo_paths)} фото) отправлен в {topic_name} (ID: {thread_id})")
     except Exception as e:
         logger.error(f"❌ Ошибка отправки альбома: {e}")
