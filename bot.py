@@ -233,8 +233,9 @@ def send_album_to_topic(topic_name, text, photo_paths):
             )
         await client.disconnect()
     
+    # ЗАПУСКАЕМ АСИНХРОННУЮ ФУНКЦИЮ ЧЕРЕЗ asyncio.run()
     try:
-        await send_telethon()  # <-- ДОБАВЛЕН await
+        asyncio.run(send_telethon())
         logger.info(f"📚 Альбом ({len(photo_paths)} фото) отправлен в {topic_name} (ID: {thread_id})")
     except Exception as e:
         logger.error(f"❌ Ошибка отправки альбома: {e}")
