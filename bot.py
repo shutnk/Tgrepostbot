@@ -188,13 +188,10 @@ async def get_channel_albums():
     i = 0
     while i < len(history.messages):
         msg = history.messages[i]
-        
-        # Если это одиночное фото — пропускаем (нам нужны только альбомы)
         if not msg.grouped_id:
             i += 1
             continue
         
-        # Собираем все сообщения с таким же grouped_id
         album_msgs = [msg]
         j = i + 1
         while j < len(history.messages):
@@ -205,7 +202,6 @@ async def get_channel_albums():
             else:
                 break
         
-        # Обрабатываем альбом
         if len(album_msgs) > 1:
             text = album_msgs[-1].message or ""
             photo_paths = []
@@ -224,7 +220,7 @@ async def get_channel_albums():
                 })
                 logger.info(f"📚 Найден альбом с {len(photo_paths)} фото")
         
-        i = j  # Переходим к следующему сообщению после альбома
+        i = j
     
     logger.info(f"✅ Загружено {len(albums)} альбомов")
     await client.disconnect()
@@ -245,7 +241,7 @@ def send_album_to_topic(topic_name, text, photo_paths):
                 file=photo_paths,
                 caption=f"📌 **{topic_name}**\n\n{text}",
                 parse_mode="markdown",
-                reply_to=thread_id,
+                message_thread_id=thread_id,  # <-- ИСПРАВЛЕНИЕ: reply_to -> message_thread_id
                 force_document=False,
                 album=True
             )
