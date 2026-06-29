@@ -185,29 +185,33 @@ async def get_channel_albums():
         hash=0
     ))
     
+    # Группируем по grouped_id
+    grouped = {}
     for msg in history.messages:
-        if msg.media and not msg.grouped_id:
-            continue
         if msg.grouped_id:
-            if msg.grouped_id in [a.get("grouped_id") for a in albums]:
-                continue
-            
-            text = msg.message or ""
-            photo_paths = []
-            for m in history.messages:
-                if m.grouped_id == msg.grouped_id and (m.photo or m.document):
-                    try:
-                        path = await client.download_media(m, file="temp_photo.jpg")
-                        photo_paths.append(path)
-                    except:
-                        pass
-            if photo_paths:
-                albums.append({
-                    "text": text,
-                    "photo_paths": photo_paths,
-                    "grouped_id": msg.grouped_id
-                })
-                logger.info(f"📚 Найден альбом с {len(photo_paths)} фото")
+            if msg.grouped_id not in grouped:
+                grouped[msg.grouped_id] = []
+            grouped[msg.grouped_id].append(msg)
+    
+    for group_id, messages in grouped.items():
+        # БЕРЁМ ТЕКСТ ИЗ ПОСЛЕДНЕГО СООБЩЕНИЯ В АЛЬБОМЕ
+        text = messages[-1].message or ""
+        photo_paths = []
+        for m in messages:
+            try:
+                # СКАЧИВАЕМ КАЖДОЕ ФОТО ИЗ КАЖДОГО СООБЩЕНИЯ
+                path = await client.download_media(m, file=f"temp_{m.id}.jpg")
+                if path:
+                    photo_paths.append(path)
+            except:
+                pass
+        
+        if photo_paths and len(photo_paths) > 1:
+            albums.append({
+                "text": text,
+                "photo_paths": photo_paths
+            })
+            logger.info(f"📚 Найден альбом с {len(photo_paths)} разными фото")
     
     logger.info(f"✅ Загружено {len(albums)} альбомов")
     await client.disconnect()
@@ -233,7 +237,6 @@ def send_album_to_topic(topic_name, text, photo_paths):
             )
         await client.disconnect()
     
-    # ЗАПУСКАЕМ АСИНХРОННУЮ ФУНКЦИЮ ЧЕРЕЗ asyncio.run()
     try:
         asyncio.run(send_telethon())
         logger.info(f"📚 Альбом ({len(photo_paths)} фото) отправлен в {topic_name} (ID: {thread_id})")
