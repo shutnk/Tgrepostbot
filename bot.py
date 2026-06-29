@@ -207,8 +207,6 @@ def send_to_topic(topic_name, text, photo_url=None):
         logger.warning(f"⚠️ Тема '{topic_name}' не в TOPIC_IDS, отправляю в общий чат")
         thread_id = 1
 
-    # ВАЖНО: используем Telethon, а не requests
-    # Мы создаём временного клиента для отправки через reply_to
     async def send_telethon():
         client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
         await client.connect()
@@ -218,7 +216,7 @@ def send_to_topic(topic_name, text, photo_url=None):
                 file=photo_url,
                 caption=f"📌 **{topic_name}**\n\n{text}",
                 parse_mode="markdown",
-                reply_to=thread_id  # ЭТО РАБОТАЕТ В 1.44.0
+                reply_to=thread_id
             )
         else:
             await client.send_message(
