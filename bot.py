@@ -159,10 +159,10 @@ async def copy_posts():
         logger.error(f"❌ Не удалось получить канал: {e}")
         return
 
-    # === ФИКС: получаем ID тем через фильтр 'forum' ===
+    # === ПОЛУЧАЕМ ВСЕХ УЧАСТНИКОВ И ФИЛЬТРУЕМ ВРУЧНУЮ ===
     try:
         group = await client.get_entity(TARGET_GROUP)
-        participants = await client.get_participants(group, filter='forum')
+        participants = await client.get_participants(group)  # БЕЗ фильтра
         topic_ids = {}
         for p in participants:
             if hasattr(p, 'topic_id') and p.topic_id:
@@ -203,7 +203,7 @@ async def copy_posts():
                                 TARGET_GROUP,
                                 file=media_bytes,
                                 caption=f"📌 **{topic}**\n\n{new_text}",
-                                reply_to=thread_id,   # <-- ЗАМЕНА на reply_to
+                                reply_to=thread_id,
                                 parse_mode="markdown"
                             )
                             logger.info(f"📸 Фото отправлено в {topic}")
@@ -212,14 +212,14 @@ async def copy_posts():
                             await client.send_message(
                                 TARGET_GROUP,
                                 f"📌 **{topic}**\n\n{new_text}",
-                                reply_to=thread_id    # <-- ЗАМЕНА на reply_to
+                                reply_to=thread_id
                             )
                             logger.info(f"📝 Текст отправлен в {topic}")
                     else:
                         await client.send_message(
                             TARGET_GROUP,
                             f"📌 **{topic}**\n\n{new_text}",
-                            reply_to=thread_id        # <-- ЗАМЕНА на reply_to
+                            reply_to=thread_id
                         )
                         logger.info(f"📝 Текст отправлен в {topic}")
                     
