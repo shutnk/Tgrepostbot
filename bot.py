@@ -1,20 +1,17 @@
-import asyncio
-import time
-import re
-import logging
 import os
+import re
+import time
+import requests
+import logging
 import base64
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from telethon import TelegramClient
-from telethon.tl.functions.messages import GetHistoryRequest
+from bs4 import BeautifulSoup
 
-API_ID = 17349
-API_HASH = '344583e45741c457fe1862106095a5eb'
-SESSION_FILE = 'session.session'
-SESSION_B64_FILE = 'session.b64'
-SOURCE_CHANNEL = '@blvckrooom'
-TARGET_GROUP = -1003991874844
+TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
+TARGET_GROUP_ID = -1003991874844
+TARGET_GROUP_USERNAME = "trifferi_katalog"
+
 MENTION_REPLACE = '@esen_baevich'
 
 TOPIC_MAP = {
@@ -131,111 +128,81 @@ def run_fake_server():
     logger.info("✅ Фейковый HTTP-сервер запущен на порту 10000")
     server.serve_forever()
 
-async def copy_posts():
-    if not os.path.exists(SESSION_B64_FILE):
-        logger.error(f"❌ Файл {SESSION_B64_FILE} не найден!")
-        return
-
+# === ПАРСИМ ТЕМЫ ПРЯМО ИЗ ССЫЛОК ГРУППЫ ===
+def get_topic_ids_from_html():
+    url = f"https://t.me/s/{TARGET_GROUP_USERNAME}"
     try:
-        with open(SESSION_B64_FILE, 'r') as f:
-            b64_data = f.read().strip()
-        decoded = base64.b64decode(b64_data)
-        with open(SESSION_FILE, 'wb') as f:
-            f.write(decoded)
-        os.chmod(SESSION_FILE, 0o600)
-        logger.info("✅ Сессия загружена из .b64")
-    except Exception as e:
-        logger.error(f"❌ Ошибка декодирования: {e}")
-        return
-
-    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
-    await client.connect()
-    logger.info("✅ Подключение через сессию установлено!")
-    
-    try:
-        channel = await client.get_entity(SOURCE_CHANNEL)
-    except Exception as e:
-        logger.error(f"❌ Не удалось получить канал: {e}")
-        return
-
-    try:
-        group = await client.get_entity(TARGET_GROUP)
-        participants = await client.get_participants(group)
+        resp = requests.get(url, timeout=20)
+        if resp.status_code != 200:
+            logger.error(f"❌ Не удалось загрузить страницу: {resp.status_code}")
+            return {}
+        
+        soup = BeautifulSoup(resp.text, 'html.parser')
         topic_ids = {}
-        for p in participants:
-            if hasattr(p, 'topic_id') and p.topic_id:
-                topic_name = p.first_name or p.title or f"Topic {p.topic_id}"
-                topic_ids[topic_name] = p.topic_id
-        logger.info(f"✅ Загружено ID тем: {list(topic_ids.keys())}")
+        
+        links = soup.find_all('a', href=re.compile(rf'/{TARGET_GROUP_USERNAME}/\d+'))
+        for link in links:
+            href = link.get('href')
+            match = re.search(rf'/{TARGET_GROUP_USERNAME}/(\d+)', href)
+            if match:
+                topic_id = int(match.group(1))
+                parent = link.find_parent('div', class_='tgme_widget_message')
+                if parent:
+                    text_div = parent.find('div', class_='tgme_widget_message_text')
+                    if text_div:
+                        topic_name = text_div.get_text().strip()
+                        if topic_name:
+                            topic_ids[topic_name] = topic_id
+        
+        logger.info(f"✅ Загружено ID тем из HTML: {list(topic_ids.keys())}")
+        return topic_ids
     except Exception as e:
-        logger.error(f"❌ Ошибка загрузки ID тем: {e}")
-        return
+        logger.error(f"❌ Ошибка парсинга тем: {e}")
+        return {}
 
-    last_msg_id = 0
-    while True:
-        try:
-            history = await client(GetHistoryRequest(
-                peer=channel,
-                limit=100,
-                offset_date=0,
-                offset_id=0,
-                max_id=0,
-                min_id=0,
-                add_offset=0,
-                hash=0
-            ))
-            
-            for msg in reversed(history.messages):
-                if msg.id > last_msg_id and msg.message:
-                    text = msg.message
-                    topic = detect_topic(text)
-                    new_text = replace_mentions(text)
-                    thread_id = topic_ids.get(topic)
-                    if not thread_id:
-                        thread_id = topic_ids.get("Ассортимент")
-                    
-                    if msg.media:
-                        try:
-                            # Скачиваем фото во временный файл
-                            temp_file = await client.download_media(msg, file="temp_photo.jpg")
-                            await client.send_file(
-                                TARGET_GROUP,
-                                file=temp_file,
-                                caption=f"📌 **{topic}**\n\n{new_text}",
-                                parse_mode="markdown"
-                            )
-                            # Удаляем временный файл
-                            if os.path.exists(temp_file):
-                                os.remove(temp_file)
-                            logger.info(f"📸 Фото отправлено в {topic}")
-                        except Exception as e:
-                            logger.error(f"❌ Ошибка отправки фото: {e}")
-                            await client.send_message(
-                                TARGET_GROUP,
-                                f"📌 **{topic}**\n\n{new_text}"
-                            )
-                            logger.info(f"📝 Текст отправлен в {topic}")
-                    else:
-                        await client.send_message(
-                            TARGET_GROUP,
-                            f"📌 **{topic}**\n\n{new_text}"
-                        )
-                        logger.info(f"📝 Текст отправлен в {topic}")
-                    
-                    last_msg_id = msg.id
-                    time.sleep(2)
-            
-            logger.info("⏳ Ожидание 10 сек...")
-            await asyncio.sleep(10)
-        except Exception as e:
-            logger.error(f"❌ Ошибка цикла: {e}")
-            await asyncio.sleep(10)
+def send_to_topic(topic_name, text, photo_url=None):
+    topic_ids = get_topic_ids_from_html()
+    thread_id = topic_ids.get(topic_name)
+    
+    if not thread_id:
+        logger.warning(f"⚠️ Тема '{topic_name}' не найдена, отправляю в общий чат")
+        thread_id = 1
 
-async def main():
-    logger.info("🚀 Запуск финального копирования...")
-    await copy_posts()
+    if photo_url:
+        url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
+        payload = {
+            "chat_id": TARGET_GROUP_ID,
+            "photo": photo_url,
+            "caption": f"📌 **{topic_name}**\n\n{text}",
+            "parse_mode": "Markdown",
+            "message_thread_id": thread_id
+        }
+        requests.post(url, data=payload)
+        logger.info(f"📸 Фото отправлено в {topic_name} (ID: {thread_id})")
+    else:
+        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+        payload = {
+            "chat_id": TARGET_GROUP_ID,
+            "text": f"📌 **{topic_name}**\n\n{text}",
+            "parse_mode": "Markdown",
+            "message_thread_id": thread_id
+        }
+        requests.post(url, data=payload)
+        logger.info(f"📝 Текст отправлен в {topic_name} (ID: {thread_id})")
+
+def main():
+    logger.info("🚀 Запуск финального копирования через HTML-парсинг...")
+    
+    # ВСТАВЬ СЮДА КОД ПОЛУЧЕНИЯ ПОСТОВ ИЗ КАНАЛА
+    # Например, через Telethon или Requests
+    logger.info("Здесь должен быть код получения постов из @blvckrooom")
+    # Пример:
+    # posts = get_posts_from_channel()
+    # for post in posts:
+    #     topic = detect_topic(post["text"])
+    #     send_to_topic(topic, post["text"], post.get("photo_url"))
 
 if __name__ == "__main__":
     http_thread = threading.Thread(target=run_fake_server, daemon=True)
     http_thread.start()
-    asyncio.run(main())
+    main()
