@@ -21,7 +21,6 @@ SESSION_FILE = 'session.session'
 SESSION_B64_FILE = 'session.b64'
 SOURCE_CHANNEL = '@blvckrooom'
 
-# === ТОЛЬКО ПОДТВЕРЖДЁННЫЕ ID ===
 TOPIC_IDS = {
     "Ассортимент": 477,
     "Ralph Lauren": 423,
@@ -208,27 +207,32 @@ def send_to_topic(topic_name, text, photo_url=None):
         logger.warning(f"⚠️ Тема '{topic_name}' не в TOPIC_IDS, отправляю в общий чат")
         thread_id = 1
 
-    if photo_url:
-        url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
-        files = {'photo': open(photo_url, 'rb')}
-        payload = {
-            "chat_id": TARGET_GROUP_ID,
-            "caption": f"📌 **{topic_name}**\n\n{text}",
-            "parse_mode": "Markdown",
-            "message_thread_id": thread_id
-        }
-        requests.post(url, files=files, data=payload)
-        logger.info(f"📸 Фото + текст отправлено в {topic_name} (ID: {thread_id})")
-    else:
-        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-        payload = {
-            "chat_id": TARGET_GROUP_ID,
-            "text": f"📌 **{topic_name}**\n\n{text}",
-            "parse_mode": "Markdown",
-            "message_thread_id": thread_id
-        }
-        requests.post(url, data=payload)
-        logger.info(f"📝 Текст отправлен в {topic_name} (ID: {thread_id})")
+    # ВАЖНО: используем Telethon, а не requests
+    # Мы создаём временного клиента для отправки через reply_to
+    async def send_telethon():
+        client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+        await client.connect()
+        if photo_url:
+            await client.send_file(
+                TARGET_GROUP_ID,
+                file=photo_url,
+                caption=f"📌 **{topic_name}**\n\n{text}",
+                parse_mode="markdown",
+                reply_to=thread_id  # ЭТО РАБОТАЕТ В 1.44.0
+            )
+        else:
+            await client.send_message(
+                TARGET_GROUP_ID,
+                f"📌 **{topic_name}**\n\n{text}",
+                reply_to=thread_id
+            )
+        await client.disconnect()
+    
+    try:
+        asyncio.run(send_telethon())
+        logger.info(f"📦 Отправлено через Telethon в {topic_name} (ID: {thread_id})")
+    except Exception as e:
+        logger.error(f"❌ Ошибка отправки через Telethon: {e}")
 
 def main():
     logger.info("🚀 Запуск финального копирования...")
