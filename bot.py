@@ -139,15 +139,20 @@ async def get_channel_albums():
     await client.disconnect()
     return albums
 
-def clear_all_bot_messages():
-    """Удаляет ВСЕ старые сообщения, отправленные ботом в группе"""
-    logger.info("🧹 Начинаю полную очистку всех сообщений бота...")
+def clear_topic_messages(topic_name):
+    """Удаляет старые сообщения бота в конкретной теме"""
+    thread_id = TOPIC_IDS.get(topic_name)
+    if not thread_id:
+        logger.warning(f"⚠️ Тема '{topic_name}' не найдена, пропускаю очистку")
+        return
+
+    logger.info(f"🧹 Очищаю тему: {topic_name} (ID: {thread_id})")
     url = f"https://api.telegram.org/bot{TOKEN}/getChatHistory"
     params = {
         "chat_id": TARGET_GROUP_ID,
-        "limit": 100
+        "limit": 50,
+        "message_thread_id": thread_id
     }
-    deleted = 0
     try:
         resp = requests.get(url, params=params, timeout=15)
         data = resp.json()
@@ -161,13 +166,14 @@ def clear_all_bot_messages():
                         "message_id": msg["message_id"]
                     }
                     requests.post(del_url, data=del_payload)
-                    deleted += 1
-                    logger.info(f"🗑️ Удалено сообщение ID: {msg['message_id']}")
-            logger.info(f"🧹 Очистка завершена. Удалено: {deleted}")
+                    logger.info(f"🗑️ Удалено в {topic_name}: ID {msg['message_id']}")
     except Exception as e:
-        logger.error(f"❌ Ошибка очистки: {e}")
+        logger.error(f"❌ Ошибка очистки темы {topic_name}: {e}")
 
 def send_album_to_topic(topic_name, text, photo_paths):
+    # 1. Сначала очищаем тему от старых постов
+    clear_topic_messages(topic_name)
+
     thread_id = TOPIC_IDS.get(topic_name)
     if not thread_id:
         logger.warning(f"⚠️ Тема '{topic_name}' не найдена, отправляю в общий чат")
@@ -195,17 +201,11 @@ def send_album_to_topic(topic_name, text, photo_paths):
 
 def main():
     logger.info("🚀 Запуск финального копирования...")
-    
-    # 1. Сначала удаляем всё, что было до этого
-    clear_all_bot_messages()
-    
-    # 2. Загружаем альбомы
     albums = asyncio.run(get_channel_albums())
     if not albums:
         logger.info("Альбомов не найдено.")
         return
 
-    # 3. Отправляем новые альбомы
     for album in albums:
         text = replace_mentions(album["text"])
         topic = detect_topic(text)
