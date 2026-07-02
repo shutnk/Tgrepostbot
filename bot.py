@@ -5,17 +5,19 @@ import asyncio
 import logging
 import base64
 import threading
-import requests  # <-- ДОБАВЛЕНА БИБЛИОТЕКА
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import requests
+from flask import Flask, jsonify
+
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
 
+# === НАСТРОЙКИ ЛОГГЕРА ===
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# === ПЕРЕМЕННЫЕ ===
 TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
 TARGET_GROUP_ID = -1003991874844
-
 MENTION_REPLACE = '@esen_baevich'
 
 API_ID = 17349
@@ -24,6 +26,7 @@ SESSION_FILE = 'session.session'
 SESSION_B64_FILE = 'session.b64'
 SOURCE_CHANNEL = '@blvckrooom'
 
+# === ID ТЕМ ===
 TOPIC_IDS = {
     "Ассортимент": 477,
     "Ralph Lauren": 423,
@@ -32,6 +35,22 @@ TOPIC_IDS = {
     "ZIMMERMANN": 421,
 }
 
+# === ЗАПУСК FLASK (чтобы UptimeRobot видел сайт) ===
+app = Flask(__name__)
+
+@app.route("/")
+def index():
+    return "Bot is running!"
+
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok"}), 200
+
+def run_flask():
+    logger.info("✅ Flask-сервер запущен на порту 10000 для UptimeRobot")
+    app.run(host="0.0.0.0", port=10000)
+
+# === ЛОГИКА БОТА ===
 def detect_topic(text):
     if not text:
         return "Ассортимент"
@@ -47,17 +66,6 @@ def detect_topic(text):
 
 def replace_mentions(text):
     return re.sub(r'@\w+', MENTION_REPLACE, text)
-
-class FakeHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is running!")
-
-def run_fake_server():
-    server = HTTPServer(("0.0.0.0", 10000), FakeHandler)
-    logger.info("✅ Фейковый HTTP-сервер запущен на порту 10000")
-    server.serve_forever()
 
 async def get_channel_albums():
     if not os.path.exists(SESSION_B64_FILE):
@@ -141,7 +149,6 @@ async def get_channel_albums():
     return albums
 
 def clear_topic_messages(topic_name):
-    """Удаляет старые сообщения бота в конкретной теме"""
     thread_id = TOPIC_IDS.get(topic_name)
     if not thread_id:
         logger.warning(f"⚠️ Тема '{topic_name}' не найдена, пропускаю очистку")
@@ -172,7 +179,6 @@ def clear_topic_messages(topic_name):
         logger.error(f"❌ Ошибка очистки темы {topic_name}: {e}")
 
 def send_album_to_topic(topic_name, text, photo_paths):
-    # 1. Сначала очищаем тему от старых постов
     clear_topic_messages(topic_name)
 
     thread_id = TOPIC_IDS.get(topic_name)
@@ -200,8 +206,8 @@ def send_album_to_topic(topic_name, text, photo_paths):
     except Exception as e:
         logger.error(f"❌ Ошибка отправки альбома: {e}")
 
-def main():
-    logger.info("🚀 Запуск финального копирования...")
+def bot_main():
+    logger.info("🚀 Запуск бота в фоновом потоке...")
     albums = asyncio.run(get_channel_albums())
     if not albums:
         logger.info("Альбомов не найдено.")
@@ -215,6 +221,9 @@ def main():
         time.sleep(6)
 
 if __name__ == "__main__":
-    http_thread = threading.Thread(target=run_fake_server, daemon=True)
-    http_thread.start()
-    main()
+    # Запускаем Flask в отдельном потоке
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    
+    # Запускаем бота в главном потоке
+    bot_main()
