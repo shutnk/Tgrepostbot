@@ -5,6 +5,7 @@ import asyncio
 import logging
 import base64
 import threading
+import requests  # <-- ДОБАВЛЕНА БИБЛИОТЕКА
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
