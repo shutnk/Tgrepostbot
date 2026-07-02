@@ -5,9 +5,8 @@ import asyncio
 import logging
 import base64
 import requests
-from telethon import TelegramClient
+from telethon import TelegramClient, functions
 from telethon.tl.functions.messages import GetHistoryRequest
-from telethon.tl.functions.channels import CreateForumTopicRequest
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -22,7 +21,6 @@ SESSION_FILE = 'session.session'
 SESSION_B64_FILE = 'session.b64'
 SOURCE_CHANNEL = '@blvckrooom'
 
-# === ПОЛНЫЙ СПИСОК ID ТЕМ (из твоих скриншотов) ===
 TOPIC_IDS = {
     "Ассортимент": 477,
     "Ralph Lauren": 423,
@@ -256,7 +254,6 @@ async def get_channel_albums():
     return albums
 
 async def ensure_topic_exists(topic_name):
-    """Проверяет, существует ли тема, и если нет — создаёт её"""
     if topic_name in TOPIC_IDS:
         return TOPIC_IDS[topic_name]
     
@@ -265,10 +262,13 @@ async def ensure_topic_exists(topic_name):
     await client.connect()
     group = await client.get_entity(TARGET_GROUP_ID)
     try:
-        result = await client(CreateForumTopicRequest(
-            channel=group,
-            title=topic_name
-        ))
+        # ОБХОД ИМПОРТА: используем functions.channels.CreateForumTopic
+        result = await client(
+            functions.channels.CreateForumTopic(
+                channel=group,
+                title=topic_name
+            )
+        )
         new_id = result.id
         TOPIC_IDS[topic_name] = new_id
         logger.info(f"✅ Тема '{topic_name}' создана (ID: {new_id})")
@@ -308,10 +308,7 @@ def clear_topic_messages(topic_name):
         logger.error(f"❌ Ошибка очистки темы {topic_name}: {e}")
 
 def send_album_to_topic(topic_name, text, photo_paths):
-    # 1. Сначала очищаем тему
     clear_topic_messages(topic_name)
-    
-    # 2. Проверяем/создаём тему
     thread_id = asyncio.run(ensure_topic_exists(topic_name))
 
     async def send_telethon():
