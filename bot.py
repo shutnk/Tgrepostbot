@@ -4,18 +4,14 @@ import time
 import asyncio
 import logging
 import base64
-import threading
 import requests
-from flask import Flask, jsonify
-
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
+from telethon.tl.functions.channels import CreateForumTopicRequest
 
-# === НАСТРОЙКИ ЛОГГЕРА ===
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# === ПЕРЕМЕННЫЕ ===
 TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
 TARGET_GROUP_ID = -1003991874844
 MENTION_REPLACE = '@esen_baevich'
@@ -26,42 +22,153 @@ SESSION_FILE = 'session.session'
 SESSION_B64_FILE = 'session.b64'
 SOURCE_CHANNEL = '@blvckrooom'
 
-# === ID ТЕМ ===
+# === ПОЛНЫЙ СПИСОК ID ТЕМ (из твоих скриншотов) ===
 TOPIC_IDS = {
     "Ассортимент": 477,
     "Ralph Lauren": 423,
     "GUCCI": 426,
     "FENDI": 425,
     "ZIMMERMANN": 421,
+    "Сумки Hermes": 392,
+    "Обувь Hermes": 394,
+    "Ремень Hermes": 386,
+    "Сумки CHANEL": 396,
+    "Chanel": 399,
+    "Женская одежда": 397,
+    "Сумки THE ROW": 398,
+    "Сумки MIU MIU": 400,
+    "Одежда для детей": 401,
+    "Сумки PRADA": 402,
+    "CHROME HEARTS": 403,
+    "Женская обувь": 404,
+    "Сумки YSL": 405,
+    "Женская верхняя одежда (Кожа, кашемир)": 406,
+    "Ремни": 407,
+    "Шарфы и шапки": 408,
+    "Одежда Loro/Brunello/Kiton/Zegna": 409,
+    "Очки": 410,
+    "Украшения Schiaparelli": 411,
+    "Сумки Schiaparelli": 412,
+    "Dolce&Gabbana": 413,
+    "Мужская верхняя одежда": 414,
+    "Купальники и пляжная одежда": 415,
+    "Сумки Loewe": 416,
+    "Сумки Loro Piana": 417,
+    "Сумки BOTTEGA VENETA": 418,
+    "Классическая мужская обувь": 419,
+    "Сумки Louis Vuitton": 420,
+    "EXCLUSIVE": 422,
+    "BALENCIAGA": 424,
+    "Сумки Jacquemus": 427,
+    "Сумки BALENCIAGA": 428,
+    "Кроссовки Louis Vuitton": 429,
+    "Кроссовки [LUXURY SNEAKERS]": 430,
+    "Сумки DIOR": 431,
+    "Сумки GOYARD": 432,
+    "Мужские сумки": 433,
+    "Чемоданы и дорожные сумки": 434,
+    "Сумки BVLGARI": 435,
+    "Сумки Manolo Blahnik": 436,
+    "Обувь Alaïa": 437,
+    "BURBERRY": 438,
+    "Moncler": 439,
+    "Обвесы на сумку": 440,
+    "Кроссовки BALENCIAGA": 441,
+    "Обувь Chanel": 442,
+    "Обувь для пляжа и бассейна": 443,
+    "Женские сапоги": 444,
+    "Обувь Loro/Brunello/Kiton/Zegna": 445,
+    "Acne Studios": 446,
+    "CHROME HEARTS Украшения из серебра": 447,
+    "Сумки Chrome Hearts": 448,
+    "Товары для дома": 449,
+    "Сумки CELINE": 450,
+    "Лоферы Loro Piana": 451,
+    "Сумки Maison Margiela": 452,
+    "Сумки Acne Studios": 453,
+    "Сумки LEMAIRE": 454,
+    "Украшения (бижутерия)": 455,
+    "CANADA GOOSE": 456,
+    "Yves Saint Laurent": 457,
+    "AMI Paris": 458,
+    "Кроссовки LOEWE": 459,
+    "Кроссовки GUCCI": 460,
+    "Arcteryx": 461,
+    "GIVENCHY": 462,
+    "Классическая мужская одежда": 463,
+    "MAISON MARGIELA": 464,
+    "WELLDONE": 465,
+    "AMIRI": 466,
+    "Женская обувь II": 467,
+    "Сумки Roger Vivier": 468,
+    "Сумки Dolce Gabbana": 469,
+    "Сумки Alaïa": 470,
+    "Зимние куртки": 471,
+    "Обувь для детей": 472,
+    "Классическая мужская обувь из экзотической кожи": 473,
+    "Сумки Ralph Lauren": 474,
+    "Сумки MCM": 475,
+    "Max Mara": 476,
+    "Пальто": 478,
+    "alexander wang": 479,
+    "ENFANTS RICHES DEPRIMES": 480,
+    "Ювелирные украшения": 481,
+    "Обувь Louis Vuitton": 482,
+    "Сумки MOYNAT PARIS": 483,
 }
 
-# === ЗАПУСК FLASK (чтобы UptimeRobot видел сайт) ===
-app = Flask(__name__)
-
-@app.route("/")
-def index():
-    return "Bot is running!"
-
-@app.route("/health")
-def health():
-    return jsonify({"status": "ok"}), 200
-
-def run_flask():
-    logger.info("✅ Flask-сервер запущен на порту 10000 для UptimeRobot")
-    app.run(host="0.0.0.0", port=10000)
-
-# === ЛОГИКА БОТА ===
 def detect_topic(text):
     if not text:
         return "Ассортимент"
     text_lower = text.lower()
-    if 'prada' in text_lower: return "Ассортимент"
+    if 'prada' in text_lower: return "Сумки PRADA"
     if 'ralph lauren' in text_lower or 'ralphlauren' in text_lower: return "Ralph Lauren"
     if 'gucci' in text_lower: return "GUCCI"
     if 'fendi' in text_lower: return "FENDI"
     if 'zimmermann' in text_lower: return "ZIMMERMANN"
-    if 'hermes' in text_lower: return "Ассортимент"
-    if 'chanel' in text_lower: return "Ассортимент"
+    if 'hermes' in text_lower: return "Сумки Hermes"
+    if 'chanel' in text_lower: return "Chanel"
+    if 'dior' in text_lower: return "Сумки DIOR"
+    if 'louis vuitton' in text_lower: return "Сумки Louis Vuitton"
+    if 'balenciaga' in text_lower: return "BALENCIAGA"
+    if 'loewe' in text_lower: return "Сумки Loewe"
+    if 'bottega veneta' in text_lower: return "Сумки BOTTEGA VENETA"
+    if 'givenchy' in text_lower: return "GIVENCHY"
+    if 'yves saint laurent' in text_lower: return "Yves Saint Laurent"
+    if 'miu miu' in text_lower: return "Сумки MIU MIU"
+    if 'the row' in text_lower: return "Сумки THE ROW"
+    if 'zegna' in text_lower: return "Одежда Loro/Brunello/Kiton/Zegna"
+    if 'loro piana' in text_lower: return "Сумки Loro Piana"
+    if 'brunello cucinelli' in text_lower: return "Одежда Loro/Brunello/Kiton/Zegna"
+    if 'acne studios' in text_lower: return "Acne Studios"
+    if 'maison margiela' in text_lower: return "Сумки Maison Margiela"
+    if 'lemaire' in text_lower: return "Сумки LEMAIRE"
+    if 'celine' in text_lower: return "Сумки CELINE"
+    if 'chrome hearts' in text_lower: return "CHROME HEARTS"
+    if 'moncler' in text_lower: return "Moncler"
+    if 'burberry' in text_lower: return "BURBERRY"
+    if 'canada goose' in text_lower: return "CANADA GOOSE"
+    if 'max mara' in text_lower: return "Max Mara"
+    if 'mcm' in text_lower: return "Сумки MCM"
+    if 'moynat' in text_lower: return "Сумки MOYNAT PARIS"
+    if 'юбка' in text_lower: return "Женская одежда"
+    if 'платье' in text_lower: return "Женская одежда"
+    if 'брюки' in text_lower: return "Женская одежда"
+    if 'шорты' in text_lower: return "Женская одежда"
+    if 'футболка' in text_lower: return "Женская одежда"
+    if 'рубашка' in text_lower: return "Женская одежда"
+    if 'топ' in text_lower: return "Женская одежда"
+    if 'куртка' in text_lower: return "Зимние куртки"
+    if 'пальто' in text_lower: return "Пальто"
+    if 'обувь' in text_lower: return "Женская обувь"
+    if 'кроссовки' in text_lower: return "Кроссовки [LUXURY SNEAKERS]"
+    if 'часы' in text_lower: return "Часы"
+    if 'ремень' in text_lower: return "Ремни"
+    if 'сумка' in text_lower: return "Ассортимент"
+    if 'очки' in text_lower: return "Очки"
+    if 'украшения' in text_lower: return "Ювелирные украшения"
+    if 'шапка' in text_lower: return "Шарфы и шапки"
+    if 'шарф' in text_lower: return "Шарфы и шапки"
     return "Ассортимент"
 
 def replace_mentions(text):
@@ -148,6 +255,28 @@ async def get_channel_albums():
     await client.disconnect()
     return albums
 
+async def ensure_topic_exists(topic_name):
+    """Проверяет, существует ли тема, и если нет — создаёт её"""
+    if topic_name in TOPIC_IDS:
+        return TOPIC_IDS[topic_name]
+    
+    logger.info(f"🆕 Создаю новую тему: {topic_name}")
+    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+    await client.connect()
+    group = await client.get_entity(TARGET_GROUP_ID)
+    try:
+        result = await client(CreateForumTopicRequest(
+            channel=group,
+            title=topic_name
+        ))
+        new_id = result.id
+        TOPIC_IDS[topic_name] = new_id
+        logger.info(f"✅ Тема '{topic_name}' создана (ID: {new_id})")
+    except Exception as e:
+        logger.error(f"❌ Ошибка создания темы {topic_name}: {e}")
+    await client.disconnect()
+    return TOPIC_IDS.get(topic_name)
+
 def clear_topic_messages(topic_name):
     thread_id = TOPIC_IDS.get(topic_name)
     if not thread_id:
@@ -179,12 +308,11 @@ def clear_topic_messages(topic_name):
         logger.error(f"❌ Ошибка очистки темы {topic_name}: {e}")
 
 def send_album_to_topic(topic_name, text, photo_paths):
+    # 1. Сначала очищаем тему
     clear_topic_messages(topic_name)
-
-    thread_id = TOPIC_IDS.get(topic_name)
-    if not thread_id:
-        logger.warning(f"⚠️ Тема '{topic_name}' не найдена, отправляю в общий чат")
-        thread_id = 1
+    
+    # 2. Проверяем/создаём тему
+    thread_id = asyncio.run(ensure_topic_exists(topic_name))
 
     async def send_telethon():
         client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
@@ -206,8 +334,8 @@ def send_album_to_topic(topic_name, text, photo_paths):
     except Exception as e:
         logger.error(f"❌ Ошибка отправки альбома: {e}")
 
-def bot_main():
-    logger.info("🚀 Запуск бота в фоновом потоке...")
+def main():
+    logger.info("🚀 Запуск бота с автосозданием тем...")
     albums = asyncio.run(get_channel_albums())
     if not albums:
         logger.info("Альбомов не найдено.")
@@ -221,9 +349,4 @@ def bot_main():
         time.sleep(6)
 
 if __name__ == "__main__":
-    # Запускаем Flask в отдельном потоке
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    
-    # Запускаем бота в главном потоке
-    bot_main()
+    main()
