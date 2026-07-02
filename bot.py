@@ -262,7 +262,6 @@ async def ensure_topic_exists(topic_name):
     await client.connect()
     group = await client.get_entity(TARGET_GROUP_ID)
     try:
-        # ОБХОД ИМПОРТА: используем functions.channels.CreateForumTopic
         result = await client(
             functions.channels.CreateForumTopic(
                 channel=group,
@@ -331,19 +330,31 @@ def send_album_to_topic(topic_name, text, photo_paths):
     except Exception as e:
         logger.error(f"❌ Ошибка отправки альбома: {e}")
 
-def main():
-    logger.info("🚀 Запуск бота с автосозданием тем...")
-    albums = asyncio.run(get_channel_albums())
-    if not albums:
-        logger.info("Альбомов не найдено.")
-        return
+async def main_loop():
+    logger.info("🚀 Запуск бесконечного цикла...")
+    while True:
+        try:
+            albums = await get_channel_albums()
+            if not albums:
+                logger.info("Альбомов не найдено, жду 60 сек...")
+                await asyncio.sleep(60)
+                continue
 
-    for album in albums:
-        text = replace_mentions(album["text"])
-        topic = detect_topic(text)
-        photo_paths = album["photo_paths"]
-        send_album_to_topic(topic, text, photo_paths)
-        time.sleep(6)
+            for album in albums:
+                text = replace_mentions(album["text"])
+                topic = detect_topic(text)
+                photo_paths = album["photo_paths"]
+                send_album_to_topic(topic, text, photo_paths)
+                await asyncio.sleep(6)
+            
+            logger.info("✅ Цикл завершён, жду 60 сек до следующей проверки...")
+            await asyncio.sleep(60)
+        except Exception as e:
+            logger.error(f"❌ Ошибка в цикле: {e}")
+            await asyncio.sleep(60)
+
+def main():
+    asyncio.run(main_loop())
 
 if __name__ == "__main__":
     main()
