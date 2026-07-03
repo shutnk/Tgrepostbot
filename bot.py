@@ -24,7 +24,6 @@ SOURCE_CHANNEL = '@blvckrooom'
 
 app = Flask(__name__)
 
-# === ПОЛНЫЙ СПИСОК ТЕМ (включая все бренды) ===
 TOPIC_IDS = {
     "Ассортимент": 477,
     "Ralph Lauren": 423,
@@ -176,7 +175,8 @@ def detect_topic(text):
 def replace_mentions(text):
     return re.sub(r'@\w+', MENTION_REPLACE, text)
 
-async def process_one_album():
+async def process_albums(limit=100):
+    """Загружает и обрабатывает до limit альбомов за раз"""
     if not os.path.exists(SESSION_B64_FILE):
         logger.error("❌ Нет сессии!")
         return False
@@ -204,7 +204,7 @@ async def process_one_album():
         return False
 
     albums = []
-    history = await client(GetHistoryRequest(peer=channel, limit=20))
+    history = await client(GetHistoryRequest(peer=channel, limit=limit))
     i = 0
     while i < len(history.messages):
         msg = history.messages[i]
@@ -222,7 +222,7 @@ async def process_one_album():
                 break
         if len(group) > 1:
             text = group[-1].message or ""
-            photo_paths = set()  # используем set для уникальности
+            photo_paths = set()
             for m in group:
                 try:
                     p = await client.download_media(m, file=f"temp_{m.id}.jpg")
@@ -235,62 +235,67 @@ async def process_one_album():
         i = j
 
     await client.disconnect()
-    logger.info(f"📚 Найдено {len(albums)} новых альбомов")
+    logger.info(f"📚 Найдено {len(albums)} альбомов")
 
     if not albums:
-        return False
+        return True
 
-    album = albums[0]
-    text = replace_mentions(album["text"])
-    topic = detect_topic(text)
-    photos = album["photo_paths"]
+    total_sent = 0
+    for album in albums:
+        text = replace_mentions(album["text"])
+        topic = detect_topic(text)
+        photos = album["photo_paths"]
 
-    # === ОЧИСТКА ===
-    thread_id = TOPIC_IDS.get(topic)
-    if thread_id:
-        url = f"https://api.telegram.org/bot{TOKEN}/getChatHistory"
-        params = {"chat_id": TARGET_GROUP_ID, "limit": 10, "message_thread_id": thread_id}
-        try:
-            resp = requests.get(url, params=params, timeout=10)
-            for msg in resp.json().get("result", {}).get("messages", []):
-                if msg.get("from", {}).get("is_bot"):
-                    requests.post(
-                        f"https://api.telegram.org/bot{TOKEN}/deleteMessage",
-                        data={"chat_id": TARGET_GROUP_ID, "message_id": msg["message_id"]}
-                    )
-        except:
-            pass
+        # Очистка темы
+        thread_id = TOPIC_IDS.get(topic)
+        if thread_id:
+            url = f"https://api.telegram.org/bot{TOKEN}/getChatHistory"
+            params = {"chat_id": TARGET_GROUP_ID, "limit": 10, "message_thread_id": thread_id}
+            try:
+                resp = requests.get(url, params=params, timeout=10)
+                for msg in resp.json().get("result", {}).get("messages", []):
+                    if msg.get("from", {}).get("is_bot"):
+                        requests.post(
+                            f"https://api.telegram.org/bot{TOKEN}/deleteMessage",
+                            data={"chat_id": TARGET_GROUP_ID, "message_id": msg["message_id"]}
+                        )
+            except:
+                pass
 
-    # === СОЗДАНИЕ ТЕМЫ ===
-    if topic not in TOPIC_IDS:
-        logger.info(f"🆕 Создаю тему: {topic}")
+        # Создание темы, если нет
+        if topic not in TOPIC_IDS:
+            logger.info(f"🆕 Создаю тему: {topic}")
+            client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+            await client.connect()
+            group = await client.get_entity(TARGET_GROUP_ID)
+            try:
+                res = await client(functions.channels.CreateForumTopic(channel=group, title=topic))
+                TOPIC_IDS[topic] = res.id
+                logger.info(f"✅ Тема создана (ID: {res.id})")
+            except Exception as e:
+                logger.error(f"❌ Ошибка создания: {e}")
+            await client.disconnect()
+
+        thread_id = TOPIC_IDS.get(topic, 1)
+
+        # Отправка
         client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
         await client.connect()
-        group = await client.get_entity(TARGET_GROUP_ID)
-        try:
-            res = await client(functions.channels.CreateForumTopic(channel=group, title=topic))
-            TOPIC_IDS[topic] = res.id
-            logger.info(f"✅ Тема создана (ID: {res.id})")
-        except Exception as e:
-            logger.error(f"❌ Ошибка создания: {e}")
+        if photos:
+            await client.send_file(
+                TARGET_GROUP_ID,
+                file=photos,
+                caption=f"📌 **{topic}**\n\n{text}",
+                parse_mode="markdown",
+                message_thread_id=thread_id,
+                album=True
+            )
         await client.disconnect()
+        logger.info(f"📚 Альбом ({len(photos)} фото) в {topic} (ID: {thread_id})")
+        total_sent += 1
+        time.sleep(3)
 
-    thread_id = TOPIC_IDS.get(topic, 1)
-
-    # === ОТПРАВКА ===
-    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
-    await client.connect()
-    if photos:
-        await client.send_file(
-            TARGET_GROUP_ID,
-            file=photos,
-            caption=f"📌 **{topic}**\n\n{text}",
-            parse_mode="markdown",
-            message_thread_id=thread_id,
-            album=True
-        )
-    await client.disconnect()
-    logger.info(f"📚 Альбом ({len(photos)} фото) в {topic} (ID: {thread_id})")
+    logger.info(f"✅ Обработано {total_sent} альбомов")
     return True
 
 @app.route("/")
@@ -299,14 +304,9 @@ def index():
 
 @app.route("/health")
 def health():
-    try:
-        result = asyncio.run(process_one_album())
-        if result:
-            return jsonify({"status": "processed", "message": "Album sent"})
-        return jsonify({"status": "idle", "message": "No new albums"})
-    except Exception as e:
-        logger.error(f"❌ Ошибка: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    # Обрабатываем все старые + новые (максимум 100)
+    asyncio.run(process_albums(limit=100))
+    return jsonify({"status": "ok"})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
