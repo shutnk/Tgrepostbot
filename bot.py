@@ -202,7 +202,7 @@ async def get_channel_albums():
     albums = []
     history = await client(GetHistoryRequest(
         peer=channel,
-        limit=50,
+        limit=10,
         offset_date=0,
         offset_id=0,
         max_id=0,
@@ -325,23 +325,24 @@ async def send_album_to_topic(topic_name, text, photo_paths):
     logger.info(f"📚 Альбом ({len(photo_paths)} фото) отправлен в {topic_name} (ID: {thread_id})")
 
 async def main_loop():
-    logger.info("🚀 Запуск бесконечного цикла...")
+    logger.info("🚀 Запуск фонового воркера (без тайм-аутов)...")
     while True:
         try:
             albums = await get_channel_albums()
             if not albums:
-                logger.info("Альбомов не найдено, жду 60 сек...")
-                await asyncio.sleep(60)
+                logger.info("Новых альбомов нет. Жду 30 сек...")
+                await asyncio.sleep(30)
                 continue
 
-            for album in albums:
-                text = replace_mentions(album["text"])
-                topic = detect_topic(text)
-                photo_paths = album["photo_paths"]
-                await send_album_to_topic(topic, text, photo_paths)
-                await asyncio.sleep(6)
+            album = albums[0]
+            text = replace_mentions(album["text"])
+            topic = detect_topic(text)
+            photo_paths = album["photo_paths"]
             
-            logger.info("✅ Цикл завершён, жду 60 сек до следующей проверки...")
+            logger.info(f"⏳ Обрабатываю альбом в {topic} ({len(photo_paths)} фото)...")
+            await send_album_to_topic(topic, text, photo_paths)
+            
+            logger.info("✅ Альбом обработан. Жду 60 сек перед следующим циклом...")
             await asyncio.sleep(60)
         except Exception as e:
             logger.error(f"❌ Ошибка в цикле: {e}")
