@@ -176,7 +176,6 @@ def replace_mentions(text):
     return re.sub(r'@\w+', MENTION_REPLACE, text)
 
 async def process_albums(limit=100):
-    """Загружает и обрабатывает до limit альбомов за раз"""
     if not os.path.exists(SESSION_B64_FILE):
         logger.error("❌ Нет сессии!")
         return False
@@ -204,7 +203,18 @@ async def process_albums(limit=100):
         return False
 
     albums = []
-    history = await client(GetHistoryRequest(peer=channel, limit=limit))
+    # ИСПРАВЛЕННЫЙ ВЫЗОВ (позиционные аргументы для 1.44.0)
+    history = await client(GetHistoryRequest(
+        peer=channel,
+        offset_id=0,
+        offset_date=0,
+        add_offset=0,
+        max_id=0,
+        min_id=0,
+        hash=0,
+        limit=limit
+    ))
+    
     i = 0
     while i < len(history.messages):
         msg = history.messages[i]
@@ -246,7 +256,6 @@ async def process_albums(limit=100):
         topic = detect_topic(text)
         photos = album["photo_paths"]
 
-        # Очистка темы
         thread_id = TOPIC_IDS.get(topic)
         if thread_id:
             url = f"https://api.telegram.org/bot{TOKEN}/getChatHistory"
@@ -262,7 +271,6 @@ async def process_albums(limit=100):
             except:
                 pass
 
-        # Создание темы, если нет
         if topic not in TOPIC_IDS:
             logger.info(f"🆕 Создаю тему: {topic}")
             client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
@@ -278,7 +286,6 @@ async def process_albums(limit=100):
 
         thread_id = TOPIC_IDS.get(topic, 1)
 
-        # Отправка
         client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
         await client.connect()
         if photos:
@@ -304,12 +311,10 @@ def index():
 
 @app.route("/health")
 def health():
-    # Обрабатываем все старые + новые (максимум 100)
     asyncio.run(process_albums(limit=100))
     return jsonify({"status": "ok"})
 
 if __name__ == "__main__":
-    # ЗАПУСКАЕМ ОБРАБОТКУ ПРИ СТАРТЕ ПЕРЕД ТЕМ, КАК ПОДНЯТЬ FLASK
     asyncio.run(process_albums(limit=100))
     
     port = int(os.environ.get("PORT", 10000))
