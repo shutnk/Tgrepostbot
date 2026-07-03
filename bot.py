@@ -276,7 +276,7 @@ async def ensure_topic_exists(topic_name):
     await client.disconnect()
     return TOPIC_IDS.get(topic_name)
 
-def clear_topic_messages(topic_name):
+async def clear_topic_messages(topic_name):
     thread_id = TOPIC_IDS.get(topic_name)
     if not thread_id:
         logger.warning(f"⚠️ Тема '{topic_name}' не найдена, пропускаю очистку")
@@ -306,29 +306,23 @@ def clear_topic_messages(topic_name):
     except Exception as e:
         logger.error(f"❌ Ошибка очистки темы {topic_name}: {e}")
 
-def send_album_to_topic(topic_name, text, photo_paths):
-    clear_topic_messages(topic_name)
-    thread_id = asyncio.run(ensure_topic_exists(topic_name))
+async def send_album_to_topic(topic_name, text, photo_paths):
+    await clear_topic_messages(topic_name)
+    thread_id = await ensure_topic_exists(topic_name)
 
-    async def send_telethon():
-        client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
-        await client.connect()
-        if photo_paths:
-            await client.send_file(
-                TARGET_GROUP_ID,
-                file=photo_paths,
-                caption=f"📌 **{topic_name}**\n\n{text}",
-                parse_mode="markdown",
-                message_thread_id=thread_id,
-                album=True
-            )
-        await client.disconnect()
-    
-    try:
-        asyncio.run(send_telethon())
-        logger.info(f"📚 Альбом ({len(photo_paths)} фото) отправлен в {topic_name} (ID: {thread_id})")
-    except Exception as e:
-        logger.error(f"❌ Ошибка отправки альбома: {e}")
+    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+    await client.connect()
+    if photo_paths:
+        await client.send_file(
+            TARGET_GROUP_ID,
+            file=photo_paths,
+            caption=f"📌 **{topic_name}**\n\n{text}",
+            parse_mode="markdown",
+            message_thread_id=thread_id,
+            album=True
+        )
+    await client.disconnect()
+    logger.info(f"📚 Альбом ({len(photo_paths)} фото) отправлен в {topic_name} (ID: {thread_id})")
 
 async def main_loop():
     logger.info("🚀 Запуск бесконечного цикла...")
@@ -344,7 +338,7 @@ async def main_loop():
                 text = replace_mentions(album["text"])
                 topic = detect_topic(text)
                 photo_paths = album["photo_paths"]
-                send_album_to_topic(topic, text, photo_paths)
+                await send_album_to_topic(topic, text, photo_paths)
                 await asyncio.sleep(6)
             
             logger.info("✅ Цикл завершён, жду 60 сек до следующей проверки...")
