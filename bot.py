@@ -309,5 +309,8 @@ def health():
     return jsonify({"status": "ok"})
 
 if __name__ == "__main__":
+    # ЗАПУСКАЕМ ОБРАБОТКУ ПРИ СТАРТЕ ПЕРЕД ТЕМ, КАК ПОДНЯТЬ FLASK
+    asyncio.run(process_albums(limit=100))
+    
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
