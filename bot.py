@@ -8,6 +8,7 @@ import requests
 from flask import Flask, jsonify
 from telethon import TelegramClient, functions
 from telethon.tl.functions.messages import GetHistoryRequest
+from telethon.tl.functions.channels import GetForumTopicsRequest
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -76,29 +77,22 @@ TOPIC_MAP = {
     "шарф": "Шарфы и шапки",
 }
 
-# === ОПРЕДЕЛЕНИЕ ТЕМЫ С ПРИОРИТЕТОМ ===
 def detect_topic(text):
     if not text:
         return "Ассортимент"
     text_lower = text.lower()
-    
-    # Приоритет: сначала проверяем точные категории
     if 'кроссовки' in text_lower: return "Кроссовки [LUXURY SNEAKERS]"
     if 'обувь' in text_lower: return "Обувь Hermes"
     if 'сумка' in text_lower: return "Сумки Hermes"
-    
-    # Затем проверяем бренды
     for key, topic in TOPIC_MAP.items():
         if key in text_lower:
             return topic
-    
     return "Ассортимент"
 
 def replace_mentions(text):
     return re.sub(r'@\w+', MENTION_REPLACE, text)
 
 async def get_all_topic_ids():
-    """Получает актуальные ID всех тем из группы"""
     if not os.path.exists(SESSION_B64_FILE):
         logger.error("❌ Нет сессии!")
         return {}
@@ -118,10 +112,17 @@ async def get_all_topic_ids():
     await client.connect()
     try:
         group = await client.get_entity(TARGET_GROUP_ID)
-        # Получаем все темы через итератор (работает в 1.44.0)
-        topic_ids = {}
-        async for topic in client.iter_forum_topics(group):
-            topic_ids[topic.title] = topic.id
+        # === ПРЯМОЙ ВЫЗОВ БЕЗ iter_forum_topics ===
+        result = await client(
+            GetForumTopicsRequest(
+                channel=group,
+                offset_date=0,
+                offset_id=0,
+                offset_topic=0,
+                limit=100
+            )
+        )
+        topic_ids = {t.title: t.id for t in result.topics}
         logger.info(f"✅ Загружено {len(topic_ids)} тем из группы")
         await client.disconnect()
         return topic_ids
@@ -215,11 +216,9 @@ async def process_albums(limit=100):
         topic = detect_topic(text)
         photos = album["photo_paths"]
 
-        # Получаем ID темы из свежего словаря
         thread_id = topic_ids.get(topic)
         if not thread_id:
             logger.warning(f"⚠️ Тема '{topic}' не найдена, пытаюсь создать...")
-            # Создаём тему, если нет
             client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
             await client.connect()
             group = await client.get_entity(TARGET_GROUP_ID)
@@ -233,7 +232,6 @@ async def process_albums(limit=100):
             await client.disconnect()
 
         if thread_id:
-            # Очистка темы (удаление старых постов бота)
             url = f"https://api.telegram.org/bot{TOKEN}/getChatHistory"
             params = {"chat_id": TARGET_GROUP_ID, "limit": 10, "message_thread_id": thread_id}
             try:
@@ -247,7 +245,6 @@ async def process_albums(limit=100):
             except:
                 pass
 
-            # Отправка
             client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
             await client.connect()
             if photos:
