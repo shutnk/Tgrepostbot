@@ -8,7 +8,6 @@ import requests
 from flask import Flask, jsonify
 from telethon import TelegramClient, functions
 from telethon.tl.functions.messages import GetHistoryRequest
-from telethon.tl.functions.channels import GetForumTopicsRequest
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -25,7 +24,6 @@ SOURCE_CHANNEL = '@blvckrooom'
 
 app = Flask(__name__)
 
-# === ПОЛНЫЙ СПИСОК БРЕНДОВ И КАТЕГОРИЙ ===
 TOPIC_MAP = {
     "prada": "Сумки PRADA",
     "ralph lauren": "Ralph Lauren",
@@ -112,9 +110,9 @@ async def get_all_topic_ids():
     await client.connect()
     try:
         group = await client.get_entity(TARGET_GROUP_ID)
-        # === ПРЯМОЙ ВЫЗОВ БЕЗ iter_forum_topics ===
+        # === ОБХОД ИМПОРТА: вызываем метод через строку ===
         result = await client(
-            GetForumTopicsRequest(
+            functions.channels.GetForumTopics(
                 channel=group,
                 offset_date=0,
                 offset_id=0,
