@@ -8,6 +8,7 @@ import requests
 from flask import Flask, jsonify
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
+from telethon.tl.functions.channels import GetForumTopics
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -110,15 +111,15 @@ async def get_topic_ids():
     await client.connect()
     try:
         group = await client.get_entity(TARGET_GROUP_ID)
-        # === ПОЛУЧАЕМ ID ТЕМ ЧЕРЕЗ УЧАСТНИКОВ (РАБОТАЕТ В 1.44.0) ===
-        participants = await client.get_participants(group)
-        topic_ids = {}
-        for p in participants:
-            if hasattr(p, 'topic_id') and p.topic_id:
-                # Название темы берём из имени участника
-                topic_name = p.first_name or p.title or f"Topic {p.topic_id}"
-                topic_ids[topic_name] = p.topic_id
-        logger.info(f"✅ Загружено {len(topic_ids)} тем через участников")
+        result = await client(GetForumTopics(
+            channel=group,
+            offset_date=0,
+            offset_id=0,
+            offset_topic=0,
+            limit=100
+        ))
+        topic_ids = {t.title: t.id for t in result.topics}
+        logger.info(f"✅ Загружено {len(topic_ids)} тем (от имени Нурбека)")
         await client.disconnect()
         return topic_ids
     except Exception as e:
@@ -218,21 +219,27 @@ async def process_albums(limit=100):
             await client.connect()
             group = await client.get_entity(TARGET_GROUP_ID)
             try:
-                create_url = f"https://api.telegram.org/bot{TOKEN}/createForumTopic"
-                create_payload = {"chat_id": TARGET_GROUP_ID, "name": topic}
-                resp = requests.post(create_url, data=create_payload, timeout=15)
-                data = resp.json()
-                if data.get("ok"):
-                    thread_id = data["result"]["message_thread_id"]
-                    topic_ids[topic] = thread_id
-                    logger.info(f"✅ Тема '{topic}' создана (ID: {thread_id})")
-                else:
-                    logger.error(f"❌ Ошибка создания темы {topic}: {data}")
+                result = await client(GetForumTopics(
+                    channel=group,
+                    offset_date=0,
+                    offset_id=0,
+                    offset_topic=0,
+                    limit=1
+                ))
+                # Создаём тему через аккаунт
+                create_result = await client(functions.channels.CreateForumTopic(
+                    channel=group,
+                    title=topic
+                ))
+                thread_id = create_result.id
+                topic_ids[topic] = thread_id
+                logger.info(f"✅ Тема '{topic}' создана (ID: {thread_id})")
             except Exception as e:
                 logger.error(f"❌ Ошибка создания темы {topic}: {e}")
             await client.disconnect()
 
         if thread_id:
+            # Очистка темы (удаление старых постов Нурбека)
             url = f"https://api.telegram.org/bot{TOKEN}/getChatHistory"
             params = {"chat_id": TARGET_GROUP_ID, "limit": 10, "message_thread_id": thread_id}
             try:
