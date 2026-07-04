@@ -110,9 +110,8 @@ async def get_topic_ids():
     await client.connect()
     try:
         group = await client.get_entity(TARGET_GROUP_ID)
-        # === ВЫЗОВ БЕЗ ИМПОРТА ===
-        # client.__class__.__dict__['channels'] — это внутренний объект, содержащий все методы
-        GetForumTopics = client.__class__.__dict__['channels'].GetForumTopics
+        # === ИСПРАВЛЕННЫЙ ВЫЗОВ ДЛЯ 1.44.0 ===
+        GetForumTopics = client._get_api().channels.GetForumTopics
         result = await client(GetForumTopics(
             channel=group,
             offset_date=0,
@@ -121,7 +120,7 @@ async def get_topic_ids():
             limit=100
         ))
         topic_ids = {t.title: t.id for t in result.topics}
-        logger.info(f"✅ Загружено {len(topic_ids)} тем через client")
+        logger.info(f"✅ Загружено {len(topic_ids)} тем через _get_api()")
         await client.disconnect()
         return topic_ids
     except Exception as e:
@@ -221,7 +220,7 @@ async def process_albums(limit=100):
             await client.connect()
             group = await client.get_entity(TARGET_GROUP_ID)
             try:
-                CreateForumTopic = client.__class__.__dict__['channels'].CreateForumTopic
+                CreateForumTopic = client._get_api().channels.CreateForumTopic
                 result = await client(CreateForumTopic(
                     channel=group,
                     title=topic
