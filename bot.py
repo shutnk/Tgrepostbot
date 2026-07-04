@@ -8,7 +8,6 @@ import requests
 from flask import Flask, jsonify
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
-from telethon.tl.functions.channels import GetForumTopics
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -111,6 +110,9 @@ async def get_topic_ids():
     await client.connect()
     try:
         group = await client.get_entity(TARGET_GROUP_ID)
+        # === ВЫЗОВ БЕЗ ИМПОРТА ===
+        # client.__class__.__dict__['channels'] — это внутренний объект, содержащий все методы
+        GetForumTopics = client.__class__.__dict__['channels'].GetForumTopics
         result = await client(GetForumTopics(
             channel=group,
             offset_date=0,
@@ -119,7 +121,7 @@ async def get_topic_ids():
             limit=100
         ))
         topic_ids = {t.title: t.id for t in result.topics}
-        logger.info(f"✅ Загружено {len(topic_ids)} тем (от имени Нурбека)")
+        logger.info(f"✅ Загружено {len(topic_ids)} тем через client")
         await client.disconnect()
         return topic_ids
     except Exception as e:
@@ -219,19 +221,12 @@ async def process_albums(limit=100):
             await client.connect()
             group = await client.get_entity(TARGET_GROUP_ID)
             try:
-                result = await client(GetForumTopics(
-                    channel=group,
-                    offset_date=0,
-                    offset_id=0,
-                    offset_topic=0,
-                    limit=1
-                ))
-                # Создаём тему через аккаунт
-                create_result = await client(functions.channels.CreateForumTopic(
+                CreateForumTopic = client.__class__.__dict__['channels'].CreateForumTopic
+                result = await client(CreateForumTopic(
                     channel=group,
                     title=topic
                 ))
-                thread_id = create_result.id
+                thread_id = result.id
                 topic_ids[topic] = thread_id
                 logger.info(f"✅ Тема '{topic}' создана (ID: {thread_id})")
             except Exception as e:
@@ -239,20 +234,6 @@ async def process_albums(limit=100):
             await client.disconnect()
 
         if thread_id:
-            # Очистка темы (удаление старых постов Нурбека)
-            url = f"https://api.telegram.org/bot{TOKEN}/getChatHistory"
-            params = {"chat_id": TARGET_GROUP_ID, "limit": 10, "message_thread_id": thread_id}
-            try:
-                resp = requests.get(url, params=params, timeout=10)
-                for msg in resp.json().get("result", {}).get("messages", []):
-                    if msg.get("from", {}).get("is_bot"):
-                        requests.post(
-                            f"https://api.telegram.org/bot{TOKEN}/deleteMessage",
-                            data={"chat_id": TARGET_GROUP_ID, "message_id": msg["message_id"]}
-                        )
-            except:
-                pass
-
             client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
             await client.connect()
             if photos:
