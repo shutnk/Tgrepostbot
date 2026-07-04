@@ -8,6 +8,7 @@ import requests
 from flask import Flask, jsonify
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
+from telethon.tl.functions.channels import GetForumTopics
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -24,7 +25,6 @@ SOURCE_CHANNEL = '@blvckrooom'
 
 app = Flask(__name__)
 
-# === БРЕНДЫ И КАТЕГОРИИ ===
 TOPIC_MAP = {
     "prada": "Сумки PRADA",
     "ralph lauren": "Ralph Lauren",
@@ -91,29 +91,44 @@ def detect_topic(text):
 def replace_mentions(text):
     return re.sub(r'@\w+', MENTION_REPLACE, text)
 
-async def get_topic_ids_from_api():
-    """Получает ID всех тем через Bot API"""
-    url = f"https://api.telegram.org/bot{TOKEN}/getChat"
-    params = {"chat_id": TARGET_GROUP_ID}
+async def get_topic_ids():
+    if not os.path.exists(SESSION_B64_FILE):
+        logger.error("❌ Нет сессии!")
+        return {}
+
     try:
-        resp = requests.get(url, params=params, timeout=15)
-        data = resp.json()
-        if not data.get("ok"):
-            logger.error("❌ Ошибка getChat")
-            return {}
-        # Парсим список тем из ответа
-        topics = data.get("result", {}).get("forum_topics", [])
-        topic_ids = {}
-        for t in topics:
-            topic_ids[t["title"]] = t["message_thread_id"]
-        logger.info(f"✅ Загружено {len(topic_ids)} тем через Bot API")
+        with open(SESSION_B64_FILE, 'r') as f:
+            b64_data = f.read().strip()
+        decoded = base64.b64decode(b64_data)
+        with open(SESSION_FILE, 'wb') as f:
+            f.write(decoded)
+        os.chmod(SESSION_FILE, 0o600)
+    except Exception as e:
+        logger.error(f"❌ Ошибка загрузки сессии: {e}")
+        return {}
+
+    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+    await client.connect()
+    try:
+        group = await client.get_entity(TARGET_GROUP_ID)
+        result = await client(GetForumTopics(
+            channel=group,
+            offset_date=0,
+            offset_id=0,
+            offset_topic=0,
+            limit=100
+        ))
+        topic_ids = {t.title: t.id for t in result.topics}
+        logger.info(f"✅ Загружено {len(topic_ids)} тем")
+        await client.disconnect()
         return topic_ids
     except Exception as e:
-        logger.error(f"❌ Ошибка Bot API: {e}")
+        logger.error(f"❌ Ошибка получения тем: {e}")
+        await client.disconnect()
         return {}
 
 async def process_albums(limit=100):
-    topic_ids = await get_topic_ids_from_api()
+    topic_ids = await get_topic_ids()
     if not topic_ids:
         logger.error("❌ Не удалось загрузить ID тем")
         return False
@@ -204,7 +219,7 @@ async def process_albums(limit=100):
             await client.connect()
             group = await client.get_entity(TARGET_GROUP_ID)
             try:
-                # Создаём тему через Bot API (это надёжнее)
+                # Создаём тему через Bot API
                 create_url = f"https://api.telegram.org/bot{TOKEN}/createForumTopic"
                 create_payload = {"chat_id": TARGET_GROUP_ID, "name": topic}
                 resp = requests.post(create_url, data=create_payload, timeout=15)
