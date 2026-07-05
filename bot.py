@@ -211,7 +211,6 @@ async def process_albums(limit=100):
                 logger.error(f"❌ Ошибка создания темы {topic}: {e}")
 
         if thread_id:
-            # === ФИНАЛЬНЫЙ ПРАВИЛЬНЫЙ ВЫЗОВ sendMediaGroup ===
             media = []
             for idx, p in enumerate(photos):
                 media.append({
@@ -222,7 +221,7 @@ async def process_albums(limit=100):
                     media[-1]["caption"] = f"📌 **{topic}**\n\n{text}"
                     media[-1]["parse_mode"] = "Markdown"
 
-            # Собираем файлы
+            # Формируем multipart-запрос вручную
             files = {}
             for idx, p in enumerate(photos):
                 files[f"photo{idx}.jpg"] = open(p, 'rb')
@@ -234,7 +233,10 @@ async def process_albums(limit=100):
                 "message_thread_id": thread_id
             }
             try:
-                requests.post(url, data=payload, files=files, timeout=30)
+                # Закрываем файлы после отправки
+                resp = requests.post(url, data=payload, files=files, timeout=30)
+                for f in files.values():
+                    f.close()
                 logger.info(f"📚 Альбом ({len(photos)} фото) в {topic} (ID: {thread_id})")
                 total_sent += 1
             except Exception as e:
