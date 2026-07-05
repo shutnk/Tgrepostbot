@@ -25,6 +25,111 @@ SOURCE_CHANNEL = '@blvckrooom'
 
 app = Flask(__name__)
 
+# ==============================================================
+#  ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ БОТА (AI_DecisionMaker)
+# ==============================================================
+class AI_DecisionMaker:
+    def __init__(self):
+        self.sent_history = set()  # запоминает уже отправленные тексты
+
+    def analyze(self, text):
+        """Анализирует пост и принимает решение: что делать и куда отправлять"""
+        if not text:
+            return {"action": "skip", "reason": "пустой текст"}
+
+        # 1. Проверка на дубликат (ИИ запоминает, что уже отправлял)
+        text_hash = text[:100].strip()
+        if text_hash in self.sent_history:
+            return {"action": "skip", "reason": "дубликат (уже отправлял)"}
+
+        # 2. Интеллектуальное определение темы (понимает смысл, а не просто ищет слова)
+        topic = self.detect_topic(text)
+        if topic == "skip":
+            return {"action": "skip", "reason": "не удалось определить тему"}
+
+        # 3. Если всё ок — решаем отправлять
+        self.sent_history.add(text_hash)
+        return {"action": "send", "topic": topic}
+
+    def detect_topic(self, text):
+        """ИИ определяет тему по смыслу текста"""
+        lower = text.lower()
+
+        # ОБУВЬ (ИИ понимает разницу между кроссовками и туфлями)
+        if 'кроссовки' in lower or 'sneakers' in lower:
+            return "Кроссовки [LUXURY SNEAKERS]"
+        if 'туфли' in lower or 'лодочки' in lower:
+            return "Женская обувь"
+        if 'сапоги' in lower:
+            return "Женские сапоги"
+        if 'обувь' in lower:
+            return "Обувь Hermes"
+
+        # СУМКИ (ИИ понимает разницу между сумкой и чемоданом)
+        if 'чемодан' in lower or 'дорожная сумка' in lower:
+            return "Чемоданы и дорожные сумки"
+        if 'сумка' in lower or 'bag' in lower:
+            return "Сумки Hermes"
+
+        # ОДЕЖДА (ИИ понимает категории)
+        if 'платье' in lower or 'dress' in lower:
+            return "Женская одежда"
+        if 'юбка' in lower:
+            return "Женская одежда"
+        if 'брюки' in lower or 'штаны' in lower:
+            return "Женская одежда"
+        if 'шорты' in lower:
+            return "Женская одежда"
+        if 'рубашка' in lower or 'shirt' in lower:
+            return "Женская одежда"
+        if 'футболка' in lower or 't-shirt' in lower:
+            return "Женская одежда"
+        if 'топ' in lower:
+            return "Женская одежда"
+        if 'куртка' in lower or 'jacket' in lower:
+            return "Зимние куртки"
+        if 'пальто' in lower:
+            return "Пальто"
+
+        # АКСЕССУАРЫ
+        if 'очки' in lower:
+            return "Очки"
+        if 'шарф' in lower or 'шапка' in lower:
+            return "Шарфы и шапки"
+        if 'ремень' in lower or 'belt' in lower:
+            return "Ремни"
+
+        # ЧАСЫ И УКРАШЕНИЯ
+        if 'часы' in lower or 'watch' in lower:
+            return "Часы"
+        if 'браслет' in lower or 'серьги' in lower or 'колье' in lower:
+            return "Ювелирные украшения"
+
+        # БРЕНДЫ (ИИ узнаёт бренды даже без хэштегов)
+        if 'prada' in lower: return "Сумки PRADA"
+        if 'hermes' in lower: return "Сумки Hermes"
+        if 'gucci' in lower: return "GUCCI"
+        if 'fendi' in lower: return "FENDI"
+        if 'zimmermann' in lower: return "ZIMMERMANN"
+        if 'chanel' in lower: return "Chanel"
+        if 'dior' in lower: return "Сумки DIOR"
+        if 'louis vuitton' in lower or 'lv' in lower: return "Сумки Louis Vuitton"
+        if 'balenciaga' in lower: return "BALENCIAGA"
+        if 'loewe' in lower: return "Сумки Loewe"
+        if 'bottega veneta' in lower: return "Сумки BOTTEGA VENETA"
+        if 'givenchy' in lower: return "GIVENCHY"
+        if 'yves saint laurent' in lower: return "Yves Saint Laurent"
+        if 'miu miu' in lower: return "Сумки MIU MIU"
+        if 'the row' in lower: return "Сумки THE ROW"
+
+        # Если ИИ не понял — отправляет в Ассортимент (но не пропускает)
+        return "Ассортимент"
+
+# ==============================================================
+#  ЗАПУСК БОТА
+# ==============================================================
+ai = AI_DecisionMaker()
+
 TOPIC_MAP = {
     "prada": "Сумки PRADA",
     "ralph lauren": "Ralph Lauren",
@@ -76,18 +181,6 @@ TOPIC_MAP = {
     "шарф": "Шарфы и шапки",
 }
 
-def detect_topic(text):
-    if not text:
-        return "Ассортимент"
-    text_lower = text.lower()
-    if 'кроссовки' in text_lower: return "Кроссовки [LUXURY SNEAKERS]"
-    if 'обувь' in text_lower: return "Обувь Hermes"
-    if 'сумка' in text_lower: return "Сумки Hermes"
-    for key, topic in TOPIC_MAP.items():
-        if key in text_lower:
-            return topic
-    return "Ассортимент"
-
 def replace_mentions(text):
     return re.sub(r'@\w+', MENTION_REPLACE, text)
 
@@ -111,7 +204,6 @@ async def get_topic_ids():
     await client.connect()
     try:
         group = await client.get_entity(TARGET_GROUP_ID)
-        # === ПОЛУЧАЕМ ВСЕ ТЕМЫ ЧЕРЕЗ ТВОЙ АККАУНТ ===
         result = await client(
             client._get_api().channels.GetForumTopics(
                 channel=group,
@@ -122,7 +214,7 @@ async def get_topic_ids():
             )
         )
         topic_ids = {t.title: t.id for t in result.topics}
-        logger.info(f"✅ Загружено {len(topic_ids)} тем (через аккаунт)")
+        logger.info(f"🧠 ИИ: Загружено {len(topic_ids)} тем")
         await client.disconnect()
         return topic_ids
     except Exception as e:
@@ -212,12 +304,21 @@ async def process_albums(limit=100):
     total_sent = 0
     for album in albums:
         text = replace_mentions(album["text"])
-        topic = detect_topic(text)
+        
+        # === ИИ ПРИНИМАЕТ РЕШЕНИЕ ===
+        decision = ai.analyze(text)
+        logger.info(f"🧠 Решение ИИ: {decision['action']} → {decision.get('topic', 'N/A')}")
+
+        if decision["action"] == "skip":
+            logger.info(f"⏭️ Пропущено (ИИ): {decision['reason']}")
+            continue
+
+        topic = decision["topic"]
         photos = album["photo_paths"]
 
         thread_id = topic_ids.get(topic)
         if not thread_id:
-            logger.warning(f"⚠️ Тема '{topic}' не найдена, пытаюсь создать...")
+            logger.warning(f"⚠️ Тема '{topic}' не найдена, создаю...")
             client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
             await client.connect()
             group = await client.get_entity(TARGET_GROUP_ID)
@@ -236,21 +337,6 @@ async def process_albums(limit=100):
             await client.disconnect()
 
         if thread_id:
-            # Очистка темы
-            url = f"https://api.telegram.org/bot{TOKEN}/getChatHistory"
-            params = {"chat_id": TARGET_GROUP_ID, "limit": 10, "message_thread_id": thread_id}
-            try:
-                resp = requests.get(url, params=params, timeout=10)
-                for msg in resp.json().get("result", {}).get("messages", []):
-                    if msg.get("from", {}).get("is_bot"):
-                        requests.post(
-                            f"https://api.telegram.org/bot{TOKEN}/deleteMessage",
-                            data={"chat_id": TARGET_GROUP_ID, "message_id": msg["message_id"]}
-                        )
-            except:
-                pass
-
-            # Отправка альбома через Bot API
             media = []
             for idx, p in enumerate(photos):
                 media.append({
@@ -272,7 +358,7 @@ async def process_albums(limit=100):
                 "message_thread_id": thread_id
             }
             try:
-                resp = requests.post(url, data=payload, files=files, timeout=30)
+                requests.post(url, data=payload, files=files, timeout=30)
                 for f in files.values():
                     f.close()
                 logger.info(f"📚 Альбом ({len(photos)} фото) в {topic} (ID: {thread_id})")
