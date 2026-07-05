@@ -6,8 +6,9 @@ import logging
 import base64
 import requests
 from flask import Flask, jsonify
-from telethon import TelegramClient, functions
+from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
+from telethon.tl.functions.channels import GetForumTopicsRequest
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -110,10 +111,9 @@ async def get_topic_ids():
     await client.connect()
     try:
         group = await client.get_entity(TARGET_GROUP_ID)
-        # === ОБХОД: получаем channels через getattr ===
-        channels_obj = getattr(functions, 'channels')
+        # === ЕДИНСТВЕННЫЙ РАБОЧИЙ ВЫЗОВ ДЛЯ 1.44.0 ===
         result = await client(
-            channels_obj.GetForumTopics(
+            GetForumTopicsRequest(
                 channel=group,
                 offset_date=0,
                 offset_id=0,
@@ -122,7 +122,7 @@ async def get_topic_ids():
             )
         )
         topic_ids = {t.title: t.id for t in result.topics}
-        logger.info(f"✅ Загружено {len(topic_ids)} тем")
+        logger.info(f"✅ Загружено {len(topic_ids)} тем через GetForumTopicsRequest")
         await client.disconnect()
         return topic_ids
     except Exception as e:
@@ -222,14 +222,21 @@ async def process_albums(limit=100):
             await client.connect()
             group = await client.get_entity(TARGET_GROUP_ID)
             try:
-                channels_obj = getattr(functions, 'channels')
                 result = await client(
-                    channels_obj.CreateForumTopic(
+                    GetForumTopicsRequest(
                         channel=group,
-                        title=topic
+                        offset_date=0,
+                        offset_id=0,
+                        offset_topic=0,
+                        limit=1
                     )
                 )
-                thread_id = result.id
+                # Создаём тему через аккаунт
+                create_result = await client(functions.channels.CreateForumTopic(
+                    channel=group,
+                    title=topic
+                ))
+                thread_id = create_result.id
                 topic_ids[topic] = thread_id
                 logger.info(f"✅ Тема '{topic}' создана (ID: {thread_id})")
             except Exception as e:
