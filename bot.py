@@ -4,6 +4,7 @@ import time
 import asyncio
 import logging
 import base64
+import json
 import requests
 from flask import Flask, jsonify
 from telethon import TelegramClient
@@ -91,7 +92,6 @@ def replace_mentions(text):
     return re.sub(r'@\w+', MENTION_REPLACE, text)
 
 async def get_topic_ids_via_api():
-    """Получает ID тем через Bot API (требует прав администратора)"""
     url = f"https://api.telegram.org/bot{TOKEN}/getChat"
     params = {"chat_id": TARGET_GROUP_ID}
     try:
@@ -211,18 +211,18 @@ async def process_albums(limit=100):
                 logger.error(f"❌ Ошибка создания темы {topic}: {e}")
 
         if thread_id:
-            # Отправляем альбом через sendMediaGroup
+            # === ФИНАЛЬНЫЙ ПРАВИЛЬНЫЙ ВЫЗОВ sendMediaGroup ===
             media = []
             for idx, p in enumerate(photos):
-                with open(p, 'rb') as f:
-                    media.append({
-                        "type": "photo",
-                        "media": f"attach://photo{idx}.jpg"
-                    })
+                media.append({
+                    "type": "photo",
+                    "media": f"attach://photo{idx}.jpg"
+                })
                 if idx == 0:
                     media[-1]["caption"] = f"📌 **{topic}**\n\n{text}"
                     media[-1]["parse_mode"] = "Markdown"
 
+            # Собираем файлы
             files = {}
             for idx, p in enumerate(photos):
                 files[f"photo{idx}.jpg"] = open(p, 'rb')
