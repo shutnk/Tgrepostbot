@@ -110,8 +110,9 @@ async def get_topic_ids():
     await client.connect()
     try:
         group = await client.get_entity(TARGET_GROUP_ID)
-        # === ИСПРАВЛЕННЫЙ ВЫЗОВ: getattr(client, 'channels') ===
-        channels_obj = getattr(client, 'channels')
+        # === ИСПОЛЬЗУЕМ _get_api() ПРАВИЛЬНО ===
+        api = client._get_api()
+        channels_obj = api.channels
         result = await client(
             channels_obj.GetForumTopics(
                 channel=group,
@@ -122,7 +123,7 @@ async def get_topic_ids():
             )
         )
         topic_ids = {t.title: t.id for t in result.topics}
-        logger.info(f"✅ Загружено {len(topic_ids)} тем")
+        logger.info(f"✅ Загружено {len(topic_ids)} тем через _get_api().channels")
         await client.disconnect()
         return topic_ids
     except Exception as e:
@@ -222,7 +223,8 @@ async def process_albums(limit=100):
             await client.connect()
             group = await client.get_entity(TARGET_GROUP_ID)
             try:
-                channels_obj = getattr(client, 'channels')
+                api = client._get_api()
+                channels_obj = api.channels
                 result = await client(
                     channels_obj.CreateForumTopic(
                         channel=group,
