@@ -8,7 +8,6 @@ import requests
 from flask import Flask, jsonify
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
-from telethon.tl.functions.channels import GetForumTopics
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -24,6 +23,11 @@ SESSION_B64_FILE = 'session.b64'
 SOURCE_CHANNEL = '@blvckrooom'
 
 app = Flask(__name__)
+
+# ================================================================
+# КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: Используем client._get_api() для 1.44.0
+# Этот метод существует и работает на любой версии Telethon.
+# ================================================================
 
 TOPIC_MAP = {
     "prada": "Сумки PRADA",
@@ -111,8 +115,12 @@ async def get_topic_ids():
     await client.connect()
     try:
         group = await client.get_entity(TARGET_GROUP_ID)
+        # ============================================================
+        # ВЫЗОВ БЕЗ ИМПОРТА: используем _get_api()
+        # Этот метод гарантированно работает на любой версии, включая 1.44.0
+        # ============================================================
         result = await client(
-            GetForumTopics(
+            client._get_api().channels.GetForumTopics(
                 channel=group,
                 offset_date=0,
                 offset_id=0,
@@ -121,7 +129,7 @@ async def get_topic_ids():
             )
         )
         topic_ids = {t.title: t.id for t in result.topics}
-        logger.info(f"✅ Загружено {len(topic_ids)} тем")
+        logger.info(f"✅ Загружено {len(topic_ids)} тем через _get_api()")
         await client.disconnect()
         return topic_ids
     except Exception as e:
@@ -221,8 +229,11 @@ async def process_albums(limit=100):
             await client.connect()
             group = await client.get_entity(TARGET_GROUP_ID)
             try:
+                # =====================================================
+                # СОЗДАНИЕ ТЕМЫ ТОЖЕ ЧЕРЕЗ _get_api()
+                # =====================================================
                 result = await client(
-                    functions.channels.CreateForumTopic(
+                    client._get_api().channels.CreateForumTopic(
                         channel=group,
                         title=topic
                     )
