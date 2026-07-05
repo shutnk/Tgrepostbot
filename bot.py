@@ -110,9 +110,10 @@ async def get_topic_ids():
     await client.connect()
     try:
         group = await client.get_entity(TARGET_GROUP_ID)
-        # === ЕДИНСТВЕННЫЙ ВЫЗОВ, КОТОРЫЙ РАБОТАЕТ В 1.44.0 ===
+        # === ОБХОД: получаем channels через getattr ===
+        channels_obj = getattr(functions, 'channels')
         result = await client(
-            functions.channels.GetForumTopics(
+            channels_obj.GetForumTopics(
                 channel=group,
                 offset_date=0,
                 offset_id=0,
@@ -221,8 +222,9 @@ async def process_albums(limit=100):
             await client.connect()
             group = await client.get_entity(TARGET_GROUP_ID)
             try:
+                channels_obj = getattr(functions, 'channels')
                 result = await client(
-                    functions.channels.CreateForumTopic(
+                    channels_obj.CreateForumTopic(
                         channel=group,
                         title=topic
                     )
