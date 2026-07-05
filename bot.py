@@ -1,13 +1,13 @@
 import os
 import re
 import time
+import asyncio
 import logging
 import base64
 import requests
 from flask import Flask, jsonify
-from pyrogram import Client
-from pyrogram.types import InputMediaPhoto
-from pyrogram.enums import ParseMode
+from telethon import TelegramClient
+from telethon.tl.functions.messages import GetHistoryRequest
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -16,6 +16,8 @@ TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
 TARGET_GROUP_ID = -1003991874844
 MENTION_REPLACE = '@esen_baevich'
 
+API_ID = 17349
+API_HASH = '344583e45741c457fe1862106095a5eb'
 SESSION_FILE = 'session.session'
 SESSION_B64_FILE = 'session.b64'
 SOURCE_CHANNEL = '@blvckrooom'
@@ -88,38 +90,26 @@ def detect_topic(text):
 def replace_mentions(text):
     return re.sub(r'@\w+', MENTION_REPLACE, text)
 
-async def get_topic_ids():
-    if not os.path.exists(SESSION_B64_FILE):
-        logger.error("❌ Нет сессии!")
-        return {}
-
+async def get_topic_ids_via_api():
+    """Получает ID тем через Bot API (требует прав администратора)"""
+    url = f"https://api.telegram.org/bot{TOKEN}/getChat"
+    params = {"chat_id": TARGET_GROUP_ID}
     try:
-        with open(SESSION_B64_FILE, 'r') as f:
-            b64_data = f.read().strip()
-        decoded = base64.b64decode(b64_data)
-        with open(SESSION_FILE, 'wb') as f:
-            f.write(decoded)
-        os.chmod(SESSION_FILE, 0o600)
-    except Exception as e:
-        logger.error(f"❌ Ошибка загрузки сессии: {e}")
-        return {}
-
-    client = Client("my_bot", session_string=decoded.decode('utf-8'))
-    await client.start()
-    try:
-        group = await client.get_chat(TARGET_GROUP_ID)
-        topics = await client.get_forum_topics(group.id)
-        topic_ids = {t.title: t.id for t in topics}
-        logger.info(f"✅ Загружено {len(topic_ids)} тем через Pyrogram")
-        await client.stop()
+        resp = requests.get(url, params=params, timeout=15)
+        data = resp.json()
+        if not data.get("ok"):
+            logger.error(f"❌ Ошибка getChat: {data}")
+            return {}
+        topics = data.get("result", {}).get("forum_topics", [])
+        topic_ids = {t["title"]: t["message_thread_id"] for t in topics}
+        logger.info(f"✅ Загружено {len(topic_ids)} тем через Bot API")
         return topic_ids
     except Exception as e:
-        logger.error(f"❌ Ошибка получения тем: {e}")
-        await client.stop()
+        logger.error(f"❌ Ошибка Bot API: {e}")
         return {}
 
 async def process_albums(limit=100):
-    topic_ids = await get_topic_ids()
+    topic_ids = await get_topic_ids_via_api()
     if not topic_ids:
         logger.error("❌ Не удалось загрузить ID тем")
         return False
@@ -139,37 +129,46 @@ async def process_albums(limit=100):
         logger.error(f"❌ Ошибка загрузки сессии: {e}")
         return False
 
-    client = Client("my_bot", session_string=decoded.decode('utf-8'))
-    await client.start()
-    logger.info("✅ Клиент Pyrogram запущен")
+    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+    await client.connect()
+    logger.info("✅ Подключено к аккаунту")
 
     try:
-        channel = await client.get_chat(SOURCE_CHANNEL)
+        channel = await client.get_entity(SOURCE_CHANNEL)
     except Exception as e:
         logger.error(f"❌ Не удалось получить канал: {e}")
-        await client.stop()
+        await client.disconnect()
         return False
 
     albums = []
-    messages = await client.get_messages(channel.id, limit=limit)
+    history = await client(GetHistoryRequest(
+        peer=channel,
+        offset_id=0,
+        offset_date=0,
+        add_offset=0,
+        max_id=0,
+        min_id=0,
+        hash=0,
+        limit=limit
+    ))
     
     i = 0
-    while i < len(messages):
-        msg = messages[i]
+    while i < len(history.messages):
+        msg = history.messages[i]
         if not msg.photo:
             i += 1
             continue
         group = [msg]
         j = i + 1
-        while j < len(messages):
-            nxt = messages[j]
+        while j < len(history.messages):
+            nxt = history.messages[j]
             if nxt.photo and abs(nxt.date - msg.date).total_seconds() < 5:
                 group.append(nxt)
                 j += 1
             else:
                 break
         if len(group) > 1:
-            text = group[-1].caption or ""
+            text = group[-1].message or ""
             photo_paths = set()
             for m in group:
                 try:
@@ -182,7 +181,7 @@ async def process_albums(limit=100):
                 albums.append({"text": text, "photo_paths": list(photo_paths)})
         i = j
 
-    await client.stop()
+    await client.disconnect()
     logger.info(f"📚 Найдено {len(albums)} альбомов")
 
     if not albums:
@@ -197,40 +196,49 @@ async def process_albums(limit=100):
         thread_id = topic_ids.get(topic)
         if not thread_id:
             logger.warning(f"⚠️ Тема '{topic}' не найдена, пытаюсь создать...")
-            client = Client("my_bot", session_string=decoded.decode('utf-8'))
-            await client.start()
+            create_url = f"https://api.telegram.org/bot{TOKEN}/createForumTopic"
+            create_payload = {"chat_id": TARGET_GROUP_ID, "name": topic}
             try:
-                await client.create_forum_topic(TARGET_GROUP_ID, title=topic)
-                # Перезагружаем ID тем
-                group = await client.get_chat(TARGET_GROUP_ID)
-                topics = await client.get_forum_topics(group.id)
-                topic_ids = {t.title: t.id for t in topics}
-                thread_id = topic_ids.get(topic)
-                logger.info(f"✅ Тема '{topic}' создана (ID: {thread_id})")
+                resp = requests.post(create_url, data=create_payload, timeout=15)
+                data = resp.json()
+                if data.get("ok"):
+                    thread_id = data["result"]["message_thread_id"]
+                    topic_ids[topic] = thread_id
+                    logger.info(f"✅ Тема '{topic}' создана (ID: {thread_id})")
+                else:
+                    logger.error(f"❌ Ошибка создания темы {topic}: {data}")
             except Exception as e:
                 logger.error(f"❌ Ошибка создания темы {topic}: {e}")
-            await client.stop()
 
         if thread_id:
+            # Отправляем альбом через sendMediaGroup
             media = []
             for idx, p in enumerate(photos):
-                media.append(InputMediaPhoto(media=p))
+                with open(p, 'rb') as f:
+                    media.append({
+                        "type": "photo",
+                        "media": f"attach://photo{idx}.jpg"
+                    })
                 if idx == 0:
-                    media[-1].caption = f"📌 **{topic}**\n\n{text}"
-                    media[-1].parse_mode = ParseMode.MARKDOWN
+                    media[-1]["caption"] = f"📌 **{topic}**\n\n{text}"
+                    media[-1]["parse_mode"] = "Markdown"
 
-            client = Client("my_bot", session_string=decoded.decode('utf-8'))
-            await client.start()
-            if media:
-                await client.send_media_group(
-                    chat_id=TARGET_GROUP_ID,
-                    media=media,
-                    message_thread_id=thread_id
-                )
-            await client.stop()
-            logger.info(f"📚 Альбом ({len(photos)} фото) в {topic} (ID: {thread_id})")
-            total_sent += 1
-            time.sleep(3)
+            files = {}
+            for idx, p in enumerate(photos):
+                files[f"photo{idx}.jpg"] = open(p, 'rb')
+
+            url = f"https://api.telegram.org/bot{TOKEN}/sendMediaGroup"
+            payload = {
+                "chat_id": TARGET_GROUP_ID,
+                "media": json.dumps(media),
+                "message_thread_id": thread_id
+            }
+            try:
+                requests.post(url, data=payload, files=files, timeout=30)
+                logger.info(f"📚 Альбом ({len(photos)} фото) в {topic} (ID: {thread_id})")
+                total_sent += 1
+            except Exception as e:
+                logger.error(f"❌ Ошибка отправки альбома: {e}")
 
     logger.info(f"✅ Обработано {total_sent} альбомов")
     return True
