@@ -24,10 +24,9 @@ SOURCE_CHANNEL = '@blvckrooom'
 
 app = Flask(__name__)
 
-# ================================================================
-# КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: Используем client._get_api() для 1.44.0
-# Этот метод существует и работает на любой версии Telethon.
-# ================================================================
+# ================================
+# ПРЯМОЙ ВЫЗОВ БЕЗ ИМПОРТА
+# ================================
 
 TOPIC_MAP = {
     "prada": "Сумки PRADA",
@@ -115,12 +114,13 @@ async def get_topic_ids():
     await client.connect()
     try:
         group = await client.get_entity(TARGET_GROUP_ID)
-        # ============================================================
-        # ВЫЗОВ БЕЗ ИМПОРТА: используем _get_api()
-        # Этот метод гарантированно работает на любой версии, включая 1.44.0
-        # ============================================================
+        # ================================================================
+        # ФИНАЛЬНЫЙ ВЫЗОВ: используем client.__class__.__dict__['channels']
+        # Это внутренний объект, который гарантированно существует в 1.44.0
+        # ================================================================
+        channels_obj = client.__class__.__dict__['channels']
         result = await client(
-            client._get_api().channels.GetForumTopics(
+            channels_obj.GetForumTopics(
                 channel=group,
                 offset_date=0,
                 offset_id=0,
@@ -129,7 +129,7 @@ async def get_topic_ids():
             )
         )
         topic_ids = {t.title: t.id for t in result.topics}
-        logger.info(f"✅ Загружено {len(topic_ids)} тем через _get_api()")
+        logger.info(f"✅ Загружено {len(topic_ids)} тем через client.__class__.__dict__")
         await client.disconnect()
         return topic_ids
     except Exception as e:
@@ -230,10 +230,11 @@ async def process_albums(limit=100):
             group = await client.get_entity(TARGET_GROUP_ID)
             try:
                 # =====================================================
-                # СОЗДАНИЕ ТЕМЫ ТОЖЕ ЧЕРЕЗ _get_api()
+                # СОЗДАНИЕ ТЕМЫ ТОЖЕ ЧЕРЕЗ __dict__
                 # =====================================================
+                channels_obj = client.__class__.__dict__['channels']
                 result = await client(
-                    client._get_api().channels.CreateForumTopic(
+                    channels_obj.CreateForumTopic(
                         channel=group,
                         title=topic
                     )
