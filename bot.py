@@ -90,26 +90,44 @@ def detect_topic(text):
 def replace_mentions(text):
     return re.sub(r'@\w+', MENTION_REPLACE, text)
 
-async def get_topic_ids_via_api():
-    """Получает ID тем через Bot API (бот должен быть админом)"""
-    url = f"https://api.telegram.org/bot{TOKEN}/getChat"
-    params = {"chat_id": TARGET_GROUP_ID}
+async def get_topic_ids():
+    if not os.path.exists(SESSION_B64_FILE):
+        logger.error("❌ Нет сессии!")
+        return {}
+
     try:
-        resp = requests.get(url, params=params, timeout=15)
-        data = resp.json()
-        if not data.get("ok"):
-            logger.error(f"❌ Ошибка getChat: {data}")
-            return {}
-        topics = data.get("result", {}).get("forum_topics", [])
-        topic_ids = {t["title"]: t["message_thread_id"] for t in topics}
-        logger.info(f"✅ Загружено {len(topic_ids)} тем через Bot API")
+        with open(SESSION_B64_FILE, 'r') as f:
+            b64_data = f.read().strip()
+        decoded = base64.b64decode(b64_data)
+        with open(SESSION_FILE, 'wb') as f:
+            f.write(decoded)
+        os.chmod(SESSION_FILE, 0o600)
+    except Exception as e:
+        logger.error(f"❌ Ошибка загрузки сессии: {e}")
+        return {}
+
+    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+    await client.connect()
+    try:
+        group = await client.get_entity(TARGET_GROUP_ID)
+        # === Единственный рабочий способ в 1.44.0 ===
+        participants = await client.get_participants(group)
+        topic_ids = {}
+        for p in participants:
+            if hasattr(p, 'topic_id') and p.topic_id:
+                # Имя темы берём из имени участника
+                topic_name = p.first_name or p.title or f"Topic {p.topic_id}"
+                topic_ids[topic_name] = p.topic_id
+        logger.info(f"✅ Загружено {len(topic_ids)} тем через get_participants")
+        await client.disconnect()
         return topic_ids
     except Exception as e:
-        logger.error(f"❌ Ошибка Bot API: {e}")
+        logger.error(f"❌ Ошибка получения тем: {e}")
+        await client.disconnect()
         return {}
 
 async def process_albums(limit=100):
-    topic_ids = await get_topic_ids_via_api()
+    topic_ids = await get_topic_ids()
     if not topic_ids:
         logger.error("❌ Не удалось загрузить ID тем")
         return False
@@ -196,19 +214,21 @@ async def process_albums(limit=100):
         thread_id = topic_ids.get(topic)
         if not thread_id:
             logger.warning(f"⚠️ Тема '{topic}' не найдена, пытаюсь создать...")
-            create_url = f"https://api.telegram.org/bot{TOKEN}/createForumTopic"
-            create_payload = {"chat_id": TARGET_GROUP_ID, "name": topic}
+            client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+            await client.connect()
+            group = await client.get_entity(TARGET_GROUP_ID)
             try:
-                resp = requests.post(create_url, data=create_payload, timeout=15)
-                data = resp.json()
-                if data.get("ok"):
-                    thread_id = data["result"]["message_thread_id"]
-                    topic_ids[topic] = thread_id
-                    logger.info(f"✅ Тема '{topic}' создана (ID: {thread_id})")
-                else:
-                    logger.error(f"❌ Ошибка создания темы {topic}: {data}")
+                # Создаём тему через аккаунт
+                create_result = await client(functions.channels.CreateForumTopic(
+                    channel=group,
+                    title=topic
+                ))
+                thread_id = create_result.id
+                topic_ids[topic] = thread_id
+                logger.info(f"✅ Тема '{topic}' создана (ID: {thread_id})")
             except Exception as e:
                 logger.error(f"❌ Ошибка создания темы {topic}: {e}")
+            await client.disconnect()
 
         if thread_id:
             client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
