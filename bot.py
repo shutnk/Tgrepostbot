@@ -91,25 +91,47 @@ def detect_topic(text):
 def replace_mentions(text):
     return re.sub(r'@\w+', MENTION_REPLACE, text)
 
-async def get_topic_ids_via_api():
-    url = f"https://api.telegram.org/bot{TOKEN}/getChat"
-    params = {"chat_id": TARGET_GROUP_ID}
+async def get_topic_ids():
+    if not os.path.exists(SESSION_B64_FILE):
+        logger.error("❌ Нет сессии!")
+        return {}
+
     try:
-        resp = requests.get(url, params=params, timeout=15)
-        data = resp.json()
-        if not data.get("ok"):
-            logger.error(f"❌ Ошибка getChat: {data}")
-            return {}
-        topics = data.get("result", {}).get("forum_topics", [])
-        topic_ids = {t["title"]: t["message_thread_id"] for t in topics}
-        logger.info(f"✅ Загружено {len(topic_ids)} тем через Bot API")
+        with open(SESSION_B64_FILE, 'r') as f:
+            b64_data = f.read().strip()
+        decoded = base64.b64decode(b64_data)
+        with open(SESSION_FILE, 'wb') as f:
+            f.write(decoded)
+        os.chmod(SESSION_FILE, 0o600)
+    except Exception as e:
+        logger.error(f"❌ Ошибка загрузки сессии: {e}")
+        return {}
+
+    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+    await client.connect()
+    try:
+        group = await client.get_entity(TARGET_GROUP_ID)
+        # === ПОЛУЧАЕМ ВСЕ ТЕМЫ ЧЕРЕЗ ТВОЙ АККАУНТ ===
+        result = await client(
+            client._get_api().channels.GetForumTopics(
+                channel=group,
+                offset_date=0,
+                offset_id=0,
+                offset_topic=0,
+                limit=100
+            )
+        )
+        topic_ids = {t.title: t.id for t in result.topics}
+        logger.info(f"✅ Загружено {len(topic_ids)} тем (через аккаунт)")
+        await client.disconnect()
         return topic_ids
     except Exception as e:
-        logger.error(f"❌ Ошибка Bot API: {e}")
+        logger.error(f"❌ Ошибка получения тем: {e}")
+        await client.disconnect()
         return {}
 
 async def process_albums(limit=100):
-    topic_ids = await get_topic_ids_via_api()
+    topic_ids = await get_topic_ids()
     if not topic_ids:
         logger.error("❌ Не удалось загрузить ID тем")
         return False
@@ -196,21 +218,39 @@ async def process_albums(limit=100):
         thread_id = topic_ids.get(topic)
         if not thread_id:
             logger.warning(f"⚠️ Тема '{topic}' не найдена, пытаюсь создать...")
-            create_url = f"https://api.telegram.org/bot{TOKEN}/createForumTopic"
-            create_payload = {"chat_id": TARGET_GROUP_ID, "name": topic}
+            client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+            await client.connect()
+            group = await client.get_entity(TARGET_GROUP_ID)
             try:
-                resp = requests.post(create_url, data=create_payload, timeout=15)
-                data = resp.json()
-                if data.get("ok"):
-                    thread_id = data["result"]["message_thread_id"]
-                    topic_ids[topic] = thread_id
-                    logger.info(f"✅ Тема '{topic}' создана (ID: {thread_id})")
-                else:
-                    logger.error(f"❌ Ошибка создания темы {topic}: {data}")
+                result = await client(
+                    client._get_api().channels.CreateForumTopic(
+                        channel=group,
+                        title=topic
+                    )
+                )
+                thread_id = result.id
+                topic_ids[topic] = thread_id
+                logger.info(f"✅ Тема '{topic}' создана (ID: {thread_id})")
             except Exception as e:
                 logger.error(f"❌ Ошибка создания темы {topic}: {e}")
+            await client.disconnect()
 
         if thread_id:
+            # Очистка темы
+            url = f"https://api.telegram.org/bot{TOKEN}/getChatHistory"
+            params = {"chat_id": TARGET_GROUP_ID, "limit": 10, "message_thread_id": thread_id}
+            try:
+                resp = requests.get(url, params=params, timeout=10)
+                for msg in resp.json().get("result", {}).get("messages", []):
+                    if msg.get("from", {}).get("is_bot"):
+                        requests.post(
+                            f"https://api.telegram.org/bot{TOKEN}/deleteMessage",
+                            data={"chat_id": TARGET_GROUP_ID, "message_id": msg["message_id"]}
+                        )
+            except:
+                pass
+
+            # Отправка альбома через Bot API
             media = []
             for idx, p in enumerate(photos):
                 media.append({
@@ -221,7 +261,6 @@ async def process_albums(limit=100):
                     media[-1]["caption"] = f"📌 **{topic}**\n\n{text}"
                     media[-1]["parse_mode"] = "Markdown"
 
-            # Формируем multipart-запрос вручную
             files = {}
             for idx, p in enumerate(photos):
                 files[f"photo{idx}.jpg"] = open(p, 'rb')
@@ -233,7 +272,6 @@ async def process_albums(limit=100):
                 "message_thread_id": thread_id
             }
             try:
-                # Закрываем файлы после отправки
                 resp = requests.post(url, data=payload, files=files, timeout=30)
                 for f in files.values():
                     f.close()
