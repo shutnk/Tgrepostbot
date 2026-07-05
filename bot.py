@@ -6,7 +6,7 @@ import logging
 import base64
 import requests
 from flask import Flask, jsonify
-from telethon import TelegramClient
+from telethon import TelegramClient, functions
 from telethon.tl.functions.messages import GetHistoryRequest
 
 logging.basicConfig(level=logging.INFO)
@@ -110,11 +110,9 @@ async def get_topic_ids():
     await client.connect()
     try:
         group = await client.get_entity(TARGET_GROUP_ID)
-        # === ИСПОЛЬЗУЕМ _get_api() ПРАВИЛЬНО ===
-        api = client._get_api()
-        channels_obj = api.channels
+        # === ЕДИНСТВЕННЫЙ ВЫЗОВ, КОТОРЫЙ РАБОТАЕТ В 1.44.0 ===
         result = await client(
-            channels_obj.GetForumTopics(
+            functions.channels.GetForumTopics(
                 channel=group,
                 offset_date=0,
                 offset_id=0,
@@ -123,7 +121,7 @@ async def get_topic_ids():
             )
         )
         topic_ids = {t.title: t.id for t in result.topics}
-        logger.info(f"✅ Загружено {len(topic_ids)} тем через _get_api().channels")
+        logger.info(f"✅ Загружено {len(topic_ids)} тем")
         await client.disconnect()
         return topic_ids
     except Exception as e:
@@ -223,10 +221,8 @@ async def process_albums(limit=100):
             await client.connect()
             group = await client.get_entity(TARGET_GROUP_ID)
             try:
-                api = client._get_api()
-                channels_obj = api.channels
                 result = await client(
-                    channels_obj.CreateForumTopic(
+                    functions.channels.CreateForumTopic(
                         channel=group,
                         title=topic
                     )
