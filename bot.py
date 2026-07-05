@@ -25,111 +25,6 @@ SOURCE_CHANNEL = '@blvckrooom'
 
 app = Flask(__name__)
 
-# ==============================================================
-#  ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ БОТА (AI_DecisionMaker)
-# ==============================================================
-class AI_DecisionMaker:
-    def __init__(self):
-        self.sent_history = set()  # запоминает уже отправленные тексты
-
-    def analyze(self, text):
-        """Анализирует пост и принимает решение: что делать и куда отправлять"""
-        if not text:
-            return {"action": "skip", "reason": "пустой текст"}
-
-        # 1. Проверка на дубликат (ИИ запоминает, что уже отправлял)
-        text_hash = text[:100].strip()
-        if text_hash in self.sent_history:
-            return {"action": "skip", "reason": "дубликат (уже отправлял)"}
-
-        # 2. Интеллектуальное определение темы (понимает смысл, а не просто ищет слова)
-        topic = self.detect_topic(text)
-        if topic == "skip":
-            return {"action": "skip", "reason": "не удалось определить тему"}
-
-        # 3. Если всё ок — решаем отправлять
-        self.sent_history.add(text_hash)
-        return {"action": "send", "topic": topic}
-
-    def detect_topic(self, text):
-        """ИИ определяет тему по смыслу текста"""
-        lower = text.lower()
-
-        # ОБУВЬ (ИИ понимает разницу между кроссовками и туфлями)
-        if 'кроссовки' in lower or 'sneakers' in lower:
-            return "Кроссовки [LUXURY SNEAKERS]"
-        if 'туфли' in lower or 'лодочки' in lower:
-            return "Женская обувь"
-        if 'сапоги' in lower:
-            return "Женские сапоги"
-        if 'обувь' in lower:
-            return "Обувь Hermes"
-
-        # СУМКИ (ИИ понимает разницу между сумкой и чемоданом)
-        if 'чемодан' in lower or 'дорожная сумка' in lower:
-            return "Чемоданы и дорожные сумки"
-        if 'сумка' in lower or 'bag' in lower:
-            return "Сумки Hermes"
-
-        # ОДЕЖДА (ИИ понимает категории)
-        if 'платье' in lower or 'dress' in lower:
-            return "Женская одежда"
-        if 'юбка' in lower:
-            return "Женская одежда"
-        if 'брюки' in lower or 'штаны' in lower:
-            return "Женская одежда"
-        if 'шорты' in lower:
-            return "Женская одежда"
-        if 'рубашка' in lower or 'shirt' in lower:
-            return "Женская одежда"
-        if 'футболка' in lower or 't-shirt' in lower:
-            return "Женская одежда"
-        if 'топ' in lower:
-            return "Женская одежда"
-        if 'куртка' in lower or 'jacket' in lower:
-            return "Зимние куртки"
-        if 'пальто' in lower:
-            return "Пальто"
-
-        # АКСЕССУАРЫ
-        if 'очки' in lower:
-            return "Очки"
-        if 'шарф' in lower or 'шапка' in lower:
-            return "Шарфы и шапки"
-        if 'ремень' in lower or 'belt' in lower:
-            return "Ремни"
-
-        # ЧАСЫ И УКРАШЕНИЯ
-        if 'часы' in lower or 'watch' in lower:
-            return "Часы"
-        if 'браслет' in lower or 'серьги' in lower or 'колье' in lower:
-            return "Ювелирные украшения"
-
-        # БРЕНДЫ (ИИ узнаёт бренды даже без хэштегов)
-        if 'prada' in lower: return "Сумки PRADA"
-        if 'hermes' in lower: return "Сумки Hermes"
-        if 'gucci' in lower: return "GUCCI"
-        if 'fendi' in lower: return "FENDI"
-        if 'zimmermann' in lower: return "ZIMMERMANN"
-        if 'chanel' in lower: return "Chanel"
-        if 'dior' in lower: return "Сумки DIOR"
-        if 'louis vuitton' in lower or 'lv' in lower: return "Сумки Louis Vuitton"
-        if 'balenciaga' in lower: return "BALENCIAGA"
-        if 'loewe' in lower: return "Сумки Loewe"
-        if 'bottega veneta' in lower: return "Сумки BOTTEGA VENETA"
-        if 'givenchy' in lower: return "GIVENCHY"
-        if 'yves saint laurent' in lower: return "Yves Saint Laurent"
-        if 'miu miu' in lower: return "Сумки MIU MIU"
-        if 'the row' in lower: return "Сумки THE ROW"
-
-        # Если ИИ не понял — отправляет в Ассортимент (но не пропускает)
-        return "Ассортимент"
-
-# ==============================================================
-#  ЗАПУСК БОТА
-# ==============================================================
-ai = AI_DecisionMaker()
-
 TOPIC_MAP = {
     "prada": "Сумки PRADA",
     "ralph lauren": "Ralph Lauren",
@@ -184,46 +79,26 @@ TOPIC_MAP = {
 def replace_mentions(text):
     return re.sub(r'@\w+', MENTION_REPLACE, text)
 
-async def get_topic_ids():
-    if not os.path.exists(SESSION_B64_FILE):
-        logger.error("❌ Нет сессии!")
-        return {}
-
+async def get_topic_ids_via_api():
+    """Получает ID тем через Bot API (бот должен быть админом)"""
+    url = f"https://api.telegram.org/bot{TOKEN}/getChat"
+    params = {"chat_id": TARGET_GROUP_ID}
     try:
-        with open(SESSION_B64_FILE, 'r') as f:
-            b64_data = f.read().strip()
-        decoded = base64.b64decode(b64_data)
-        with open(SESSION_FILE, 'wb') as f:
-            f.write(decoded)
-        os.chmod(SESSION_FILE, 0o600)
-    except Exception as e:
-        logger.error(f"❌ Ошибка загрузки сессии: {e}")
-        return {}
-
-    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
-    await client.connect()
-    try:
-        group = await client.get_entity(TARGET_GROUP_ID)
-        result = await client(
-            client._get_api().channels.GetForumTopics(
-                channel=group,
-                offset_date=0,
-                offset_id=0,
-                offset_topic=0,
-                limit=100
-            )
-        )
-        topic_ids = {t.title: t.id for t in result.topics}
-        logger.info(f"🧠 ИИ: Загружено {len(topic_ids)} тем")
-        await client.disconnect()
+        resp = requests.get(url, params=params, timeout=15)
+        data = resp.json()
+        if not data.get("ok"):
+            logger.error(f"❌ Ошибка getChat: {data}")
+            return {}
+        topics = data.get("result", {}).get("forum_topics", [])
+        topic_ids = {t["title"]: t["message_thread_id"] for t in topics}
+        logger.info(f"✅ Загружено {len(topic_ids)} тем через Bot API")
         return topic_ids
     except Exception as e:
-        logger.error(f"❌ Ошибка получения тем: {e}")
-        await client.disconnect()
+        logger.error(f"❌ Ошибка Bot API: {e}")
         return {}
 
 async def process_albums(limit=100):
-    topic_ids = await get_topic_ids()
+    topic_ids = await get_topic_ids_via_api()
     if not topic_ids:
         logger.error("❌ Не удалось загрузить ID тем")
         return False
@@ -304,37 +179,24 @@ async def process_albums(limit=100):
     total_sent = 0
     for album in albums:
         text = replace_mentions(album["text"])
-        
-        # === ИИ ПРИНИМАЕТ РЕШЕНИЕ ===
-        decision = ai.analyze(text)
-        logger.info(f"🧠 Решение ИИ: {decision['action']} → {decision.get('topic', 'N/A')}")
-
-        if decision["action"] == "skip":
-            logger.info(f"⏭️ Пропущено (ИИ): {decision['reason']}")
-            continue
-
-        topic = decision["topic"]
         photos = album["photo_paths"]
 
         thread_id = topic_ids.get(topic)
         if not thread_id:
             logger.warning(f"⚠️ Тема '{topic}' не найдена, создаю...")
-            client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
-            await client.connect()
-            group = await client.get_entity(TARGET_GROUP_ID)
+            create_url = f"https://api.telegram.org/bot{TOKEN}/createForumTopic"
+            create_payload = {"chat_id": TARGET_GROUP_ID, "name": topic}
             try:
-                result = await client(
-                    client._get_api().channels.CreateForumTopic(
-                        channel=group,
-                        title=topic
-                    )
-                )
-                thread_id = result.id
-                topic_ids[topic] = thread_id
-                logger.info(f"✅ Тема '{topic}' создана (ID: {thread_id})")
+                resp = requests.post(create_url, data=create_payload, timeout=15)
+                data = resp.json()
+                if data.get("ok"):
+                    thread_id = data["result"]["message_thread_id"]
+                    topic_ids[topic] = thread_id
+                    logger.info(f"✅ Тема '{topic}' создана (ID: {thread_id})")
+                else:
+                    logger.error(f"❌ Ошибка создания темы {topic}: {data}")
             except Exception as e:
                 logger.error(f"❌ Ошибка создания темы {topic}: {e}")
-            await client.disconnect()
 
         if thread_id:
             media = []
