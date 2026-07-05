@@ -24,10 +24,6 @@ SOURCE_CHANNEL = '@blvckrooom'
 
 app = Flask(__name__)
 
-# ================================
-# ПРЯМОЙ ВЫЗОВ БЕЗ ИМПОРТА
-# ================================
-
 TOPIC_MAP = {
     "prada": "Сумки PRADA",
     "ralph lauren": "Ralph Lauren",
@@ -114,11 +110,8 @@ async def get_topic_ids():
     await client.connect()
     try:
         group = await client.get_entity(TARGET_GROUP_ID)
-        # ================================================================
-        # ФИНАЛЬНЫЙ ВЫЗОВ: используем client.__class__.__dict__['channels']
-        # Это внутренний объект, который гарантированно существует в 1.44.0
-        # ================================================================
-        channels_obj = client.__class__.__dict__['channels']
+        # === ИСПРАВЛЕННЫЙ ВЫЗОВ: getattr(client, 'channels') ===
+        channels_obj = getattr(client, 'channels')
         result = await client(
             channels_obj.GetForumTopics(
                 channel=group,
@@ -129,7 +122,7 @@ async def get_topic_ids():
             )
         )
         topic_ids = {t.title: t.id for t in result.topics}
-        logger.info(f"✅ Загружено {len(topic_ids)} тем через client.__class__.__dict__")
+        logger.info(f"✅ Загружено {len(topic_ids)} тем")
         await client.disconnect()
         return topic_ids
     except Exception as e:
@@ -229,10 +222,7 @@ async def process_albums(limit=100):
             await client.connect()
             group = await client.get_entity(TARGET_GROUP_ID)
             try:
-                # =====================================================
-                # СОЗДАНИЕ ТЕМЫ ТОЖЕ ЧЕРЕЗ __dict__
-                # =====================================================
-                channels_obj = client.__class__.__dict__['channels']
+                channels_obj = getattr(client, 'channels')
                 result = await client(
                     channels_obj.CreateForumTopic(
                         channel=group,
