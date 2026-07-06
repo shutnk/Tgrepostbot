@@ -7,8 +7,8 @@ import json
 import traceback
 from flask import Flask, jsonify
 from telethon import TelegramClient
-from telethon.tl.functions.messages import GetHistoryRequest, SendMultiMediaRequest
-from telethon.tl.types import InputMediaPhoto
+from telethon.tl.functions.messages import GetHistoryRequest, SendMultiMediaRequest, SendMessageRequest
+from telethon.tl.types import InputMediaPhoto, MessageEntityBold, MessageEntityTextUrl
 
 # ===== НАСТРОЙКИ =====
 API_ID = 17349
@@ -19,10 +19,8 @@ SOURCE_CHANNEL = '@blvckrooom'
 TARGET_GROUP_ID = -1003991874844
 MENTION_REPLACE = '@esen_baevich'
 
-# Твой Telegram ID для получения отчётов
 ADMIN_ID = 5468112563
 
-# Глобальный логгер
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
@@ -32,52 +30,33 @@ app = Flask(__name__)
 class AILogger:
     def __init__(self, client=None):
         self.client = client
-        self.log_buffer = []
-        
+
     async def send_report(self, message, level="INFO"):
-        """Отправляет отчёт админу в Telegram"""
         if not self.client:
-            logger.warning("⚠️ Клиент не подключён, отчёт не отправлен")
             return
         try:
             await self.client.send_message(ADMIN_ID, f"🤖 **{level}**\n{message}")
-        except Exception as e:
-            logger.error(f"❌ Не удалось отправить отчёт: {e}")
-    
+        except:
+            pass
+
     async def log_step(self, step_name, details, success=True):
-        """Логирует шаг с деталями"""
         emoji = "✅" if success else "❌"
         msg = f"{emoji} **{step_name}**\n{details}"
         logger.info(msg)
         await self.send_report(msg, "STEP")
-    
+
     async def log_error(self, error, context="", solution_hint=""):
-        """Логирует ошибку и предлагает решение"""
         msg = f"❌ **ОШИБКА**\nКонтекст: {context}\nОшибка: {error}\n"
         if solution_hint:
             msg += f"💡 **Предлагаю:** {solution_hint}"
-        else:
-            msg += "🤔 **Анализирую...** пытаюсь исправить автоматически"
         logger.error(msg)
         await self.send_report(msg, "ERROR")
-    
+
     async def suggest_fix(self, problem, solution_code):
-        """Предлагает заменить код"""
-        msg = f"🧠 **НЕОБХОДИМО ИЗМЕНИТЬ КОД**\nПроблема: {problem}\n\n```python\n{solution_code}\n```\n\nСкопируй и вставь это в bot.py"
+        msg = f"🧠 **НЕОБХОДИМО ИЗМЕНИТЬ КОД**\nПроблема: {problem}\n\n```python\n{solution_code}\n```"
         await self.send_report(msg, "FIX SUGGESTION")
 
 # ===== ОСНОВНАЯ ЛОГИКА =====
-async def safe_execute(func, logger_obj, *args, **kwargs):
-    """Безопасное выполнение с автоматическим исправлением"""
-    try:
-        result = await func(*args, **kwargs)
-        return result, None
-    except Exception as e:
-        error_msg = str(e)
-        trace = traceback.format_exc()
-        await logger_obj.log_error(error_msg, f"Функция: {func.__name__}", "Перезапускаю с новыми параметрами...")
-        return None, error_msg
-
 async def get_topic_ids(ai_logger):
     if not os.path.exists(SESSION_B64_FILE):
         await ai_logger.log_step("Проверка сессии", "Сессия не найдена!", False)
@@ -98,7 +77,7 @@ async def get_topic_ids(ai_logger):
     await client.connect()
     ai_logger.client = client
     await ai_logger.log_step("Подключение к аккаунту", "Успешно", True)
-    
+
     try:
         dialogs = await client.get_dialogs()
         target_dialog = None
@@ -106,12 +85,12 @@ async def get_topic_ids(ai_logger):
             if dialog.id == TARGET_GROUP_ID:
                 target_dialog = dialog
                 break
-        
+
         if not target_dialog:
             await ai_logger.log_step("Поиск группы", f"Группа {TARGET_GROUP_ID} не найдена", False)
             await client.disconnect()
             return {}
-        
+
         topic_ids = {}
         if hasattr(target_dialog, 'forum_topics') and target_dialog.forum_topics:
             for topic in target_dialog.forum_topics:
@@ -119,7 +98,7 @@ async def get_topic_ids(ai_logger):
             await ai_logger.log_step("Загрузка тем", f"Найдено {len(topic_ids)} тем", True)
         else:
             await ai_logger.log_step("Загрузка тем", "Группа не форум, темы отсутствуют", True)
-        
+
         await client.disconnect()
         return topic_ids
     except Exception as e:
@@ -129,12 +108,10 @@ async def get_topic_ids(ai_logger):
 
 async def process_albums(limit=100):
     ai_logger = AILogger(None)
-    
     await ai_logger.log_step("Запуск бота", f"Начинаю обработку {limit} сообщений", True)
-    
-    # Загружаем темы
+
     topic_ids = await get_topic_ids(ai_logger)
-    
+
     if not os.path.exists(SESSION_B64_FILE):
         await ai_logger.log_step("Сессия", "Файл сессии отсутствует", False)
         return False
@@ -152,8 +129,7 @@ async def process_albums(limit=100):
 
     client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
     await client.connect()
-    ai_logger.client = client  # Теперь логгер может отправлять сообщения
-    
+    ai_logger.client = client
     await ai_logger.log_step("Подключение к аккаунту", "Успешно", True)
 
     try:
@@ -175,9 +151,9 @@ async def process_albums(limit=100):
         hash=0,
         limit=limit
     ))
-    
+
     await ai_logger.log_step("Получение истории", f"Получено {len(history.messages)} сообщений", True)
-    
+
     i = 0
     while i < len(history.messages):
         msg = history.messages[i]
@@ -221,43 +197,50 @@ async def process_albums(limit=100):
         photos = album["photo_paths"]
 
         thread_id = topic_ids.get(topic) if topic_ids else None
-        
-        # === ОТПРАВКА С ПОВТОРАМИ ===
-        for attempt in range(3):  # 3 попытки
+
+        for attempt in range(3):
             try:
                 client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
                 await client.connect()
                 ai_logger.client = client
                 group = await client.get_entity(TARGET_GROUP_ID)
-                
+
+                # 1. Загружаем фото
                 input_photos = []
-                for idx_photo, p in enumerate(photos):
+                for p in photos:
                     file_id = await client.upload_file(p)
-                    input_photos.append(InputMediaPhoto(
-                        id=file_id
-                    ))
-                
-                # Отправляем подпись отдельно
+                    input_photos.append(InputMediaPhoto(id=file_id))
+
+                # 2. Отправляем подпись через SendMessageRequest (поддерживает темы!)
                 if input_photos and text:
-                    await client.send_message(group, f"📌 **{topic}**\n\n{text}", message_thread_id=thread_id, parse_mode="markdown")
-                
-                # Отправляем медиагруппу (без подписей)
+                    await client(SendMessageRequest(
+                        peer=group,
+                        message=f"📌 **{topic}**\n\n{text}",
+                        reply_to_msg_id=None,
+                        message_thread_id=thread_id,
+                        parse_mode="markdown"
+                    ))
+
+                # 3. Отправляем медиагруппу (без подписи)
                 await client(SendMultiMediaRequest(
                     peer=group,
                     media=input_photos,
                     reply_to_msg_id=None,
                     message_thread_id=thread_id
                 ))
-                
+
                 await ai_logger.log_step(f"Отправка альбома #{idx+1}", f"{len(photos)} фото в тему {topic}", True)
                 total_sent += 1
                 await client.disconnect()
-                break  # Если успешно — выходим из цикла попыток
-                
+                break
+
             except Exception as e:
                 await ai_logger.log_error(e, f"Попытка #{attempt+1} отправки", f"Ошибка: {e}")
-                if attempt == 2:  # Последняя попытка
-                    await ai_logger.send_report(f"🧠 **Нужно исправить код!**\nПроблема: {e}\n\nПопробуй заменить InputMediaPhoto на другой метод", "CRITICAL")
+                if attempt == 2:
+                    await ai_logger.suggest_fix(
+                        f"MessageMethods.send_message() не принимает message_thread_id",
+                        "Используй SendMessageRequest вместо send_message()"
+                    )
                 await client.disconnect()
                 await asyncio.sleep(2)
 
