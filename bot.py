@@ -9,13 +9,14 @@ import requests
 from flask import Flask, jsonify
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
+from telethon.tl.functions.channels import GetForumTopicsRequest, CreateForumTopicRequest
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
 TARGET_GROUP_ID = -1003991874844
-MENTION_REPLACE = '@esen_baevich'  # ОСТАВЛЯЕМ КАК БЫЛО
+MENTION_REPLACE = '@esen_baevich'
 
 API_ID = 17349
 API_HASH = '344583e45741c457fe1862106095a5eb'
@@ -111,16 +112,14 @@ async def get_topic_ids():
     await client.connect()
     try:
         group = await client.get_entity(TARGET_GROUP_ID)
-        # === ВЫЗОВ ЧЕРЕЗ ТВОЙ АККАУНТ ===
-        result = await client(
-            client._get_api().channels.GetForumTopics(
-                channel=group,
-                offset_date=0,
-                offset_id=0,
-                offset_topic=0,
-                limit=100
-            )
-        )
+        # === ИСПРАВЛЕННЫЙ ВЫЗОВ ===
+        result = await client(GetForumTopicsRequest(
+            channel=group,
+            offset_date=0,
+            offset_id=0,
+            offset_topic=0,
+            limit=100
+        ))
         topic_ids = {t.title: t.id for t in result.topics}
         logger.info(f"✅ Загружено {len(topic_ids)} тем")
         await client.disconnect()
@@ -222,12 +221,11 @@ async def process_albums(limit=100):
             await client.connect()
             group = await client.get_entity(TARGET_GROUP_ID)
             try:
-                result = await client(
-                    client._get_api().channels.CreateForumTopic(
-                        channel=group,
-                        title=topic
-                    )
-                )
+                # === ИСПРАВЛЕННЫЙ ВЫЗОВ ===
+                result = await client(CreateForumTopicRequest(
+                    channel=group,
+                    title=topic
+                ))
                 thread_id = result.id
                 topic_ids[topic] = thread_id
                 logger.info(f"✅ Тема '{topic}' создана (ID: {thread_id})")
