@@ -7,7 +7,6 @@ import json
 from flask import Flask, jsonify
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest, SendMultiMediaRequest
-from telethon.tl.functions.channels import GetFullChannelRequest
 from telethon.tl.types import InputMediaPhoto
 
 logging.basicConfig(level=logging.INFO)
@@ -109,13 +108,28 @@ async def get_topic_ids():
     client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
     await client.connect()
     try:
-        group = await client.get_entity(TARGET_GROUP_ID)
-        full = await client(GetFullChannelRequest(group))
+        # === ПОЛУЧАЕМ ТЕМЫ ЧЕРЕЗ ДИАЛОГИ ===
+        dialogs = await client.get_dialogs()
+        target_dialog = None
+        for dialog in dialogs:
+            if dialog.id == TARGET_GROUP_ID:
+                target_dialog = dialog
+                break
+        
+        if not target_dialog:
+            logger.warning("⚠️ Группа не найдена в диалогах")
+            await client.disconnect()
+            return {}
+        
+        # Если это форум — получаем темы, иначе пустой словарь
         topic_ids = {}
-        if full.forum_topics:
-            for topic in full.forum_topics:
+        if hasattr(target_dialog, 'forum_topics') and target_dialog.forum_topics:
+            for topic in target_dialog.forum_topics:
                 topic_ids[topic.title] = topic.id
-        logger.info(f"✅ Загружено {len(topic_ids)} тем")
+            logger.info(f"✅ Загружено {len(topic_ids)} тем (форум)")
+        else:
+            logger.info("ℹ️ Группа не является форумом, темы отсутствуют")
+        
         await client.disconnect()
         return topic_ids
     except Exception as e:
@@ -126,8 +140,8 @@ async def get_topic_ids():
 async def process_albums(limit=100):
     topic_ids = await get_topic_ids()
     if not topic_ids:
-        logger.error("❌ Не удалось загрузить ID тем")
-        return False
+        logger.warning("⚠️ Темы не загружены, отправка будет в основную ветку (без темы)")
+        # Продолжаем работу, но thread_id = None
 
     if not os.path.exists(SESSION_B64_FILE):
         logger.error("❌ Нет сессии!")
@@ -208,10 +222,7 @@ async def process_albums(limit=100):
         topic = detect_topic(text)
         photos = album["photo_paths"]
 
-        thread_id = topic_ids.get(topic)
-        if not thread_id:
-            logger.warning(f"⚠️ Тема '{topic}' не найдена, пропускаем")
-            continue
+        thread_id = topic_ids.get(topic) if topic_ids else None
 
         # === ОТПРАВКА ОТ ИМЕНИ АККАУНТА ===
         client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
@@ -232,7 +243,10 @@ async def process_albums(limit=100):
                 reply_to_msg_id=None,
                 message_thread_id=thread_id
             ))
-            logger.info(f"📚 Альбом ({len(photos)} фото) отправлен в {topic} от @nurikadambol")
+            if thread_id:
+                logger.info(f"📚 Альбом ({len(photos)} фото) отправлен в тему '{topic}' (ID: {thread_id})")
+            else:
+                logger.info(f"📚 Альбом ({len(photos)} фото) отправлен в основную ветку")
             total_sent += 1
         except Exception as e:
             logger.error(f"❌ Ошибка отправки альбома: {e}")
