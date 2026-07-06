@@ -6,10 +6,12 @@ import base64
 import json
 import traceback
 import sys
+import random
 from flask import Flask, jsonify
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest, SendMultiMediaRequest, SendMessageRequest
-from telethon.tl.types import InputMediaPhoto
+from telethon.tl.types import InputMediaPhoto, InputPhoto
+from telethon.tl.types import MessageEntityBold
 
 # ===== НАСТРОЙКИ =====
 API_ID = 17349
@@ -219,7 +221,12 @@ async def process_albums(limit=100):
                 input_photos = []
                 for p in photos:
                     file_id = await client.upload_file(p)
-                    input_photos.append(InputMediaPhoto(id=file_id))
+                    # Добавляем случайный ID для каждого фото
+                    random_id = random.randint(0, 2**63 - 1)
+                    input_photos.append(InputMediaPhoto(
+                        id=file_id,
+                        random_id=random_id
+                    ))
 
                 # 2. Отправляем подпись (в тему)
                 if input_photos and text:
@@ -230,7 +237,7 @@ async def process_albums(limit=100):
                         message_thread_id=thread_id
                     ))
 
-                # 3. Отправляем медиагруппу (БЕЗ message_thread_id, но после подписи)
+                # 3. Отправляем медиагруппу (без message_thread_id, но после подписи)
                 await client(SendMultiMediaRequest(
                     peer=group,
                     multi_media=input_photos
@@ -246,8 +253,8 @@ async def process_albums(limit=100):
                 await ai_logger.log_error(e, f"Попытка #{attempt+1} отправки", f"Ошибка: {e}")
                 if attempt == 2:
                     await ai_logger.suggest_fix(
-                        "SendMultiMediaRequest не принимает message_thread_id",
-                        "Убери message_thread_id из SendMultiMediaRequest, отправляй подпись отдельно"
+                        "Random ID empty in SendMultiMediaRequest",
+                        "Добавь random_id в каждый InputMediaPhoto"
                     )
                 await client.disconnect()
                 await asyncio.sleep(2)
