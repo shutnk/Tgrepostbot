@@ -9,6 +9,7 @@ import sys
 from flask import Flask, jsonify
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
+from telethon.tl.functions.channels import CreateForumTopicRequest, GetForumTopicsRequest
 
 # ===== НАСТРОЙКИ =====
 API_ID = 17349
@@ -65,6 +66,33 @@ class AILogger:
         await self.send_report(msg, "FIX SUGGESTION")
 
 # ===== ОСНОВНАЯ ЛОГИКА =====
+async def get_or_create_topic(client, group, topic_name):
+    """Получает ID темы, если нет — создаёт её."""
+    try:
+        # Получаем существующие темы
+        result = await client(GetForumTopicsRequest(
+            channel=group,
+            offset_date=0,
+            offset_id=0,
+            offset_topic=0,
+            limit=100
+        ))
+        for topic in result.topics:
+            if topic.title == topic_name:
+                return topic.id
+
+        # Если темы нет — создаём
+        new_topic = await client(CreateForumTopicRequest(
+            channel=group,
+            title=topic_name
+        ))
+        logger.info(f"✅ Создана новая тема: {topic_name} (ID: {new_topic.id})")
+        return new_topic.id
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка при создании темы {topic_name}: {e}")
+        return None
+
 async def get_topic_ids(ai_logger):
     if not os.path.exists(SESSION_B64_FILE):
         await ai_logger.log_step("Проверка сессии", "Сессия не найдена!", False)
@@ -87,28 +115,24 @@ async def get_topic_ids(ai_logger):
     await ai_logger.log_step("Подключение к аккаунту", "Успешно", True)
 
     try:
-        dialogs = await client.get_dialogs()
-        target_dialog = None
-        for dialog in dialogs:
-            if dialog.id == TARGET_GROUP_ID:
-                target_dialog = dialog
-                break
-
-        if not target_dialog:
-            await ai_logger.log_step("Поиск группы", f"Группа {TARGET_GROUP_ID} не найдена", False)
-            await client.disconnect()
-            return {}
-
-        topic_ids = {}
-        if hasattr(target_dialog, 'forum_topics') and target_dialog.forum_topics:
-            for topic in target_dialog.forum_topics:
-                topic_ids[topic.title] = topic.id
-            await ai_logger.log_step("Загрузка тем", f"Найдено {len(topic_ids)} тем", True)
-        else:
-            await ai_logger.log_step("Загрузка тем", "Группа не форум, темы отсутствуют", True)
-
+        group = await client.get_entity(TARGET_GROUP_ID)
+        topics = {}
+        
+        # Получаем все темы через GetForumTopicsRequest
+        result = await client(GetForumTopicsRequest(
+            channel=group,
+            offset_date=0,
+            offset_id=0,
+            offset_topic=0,
+            limit=100
+        ))
+        for topic in result.topics:
+            topics[topic.title] = topic.id
+            
+        await ai_logger.log_step("Загрузка тем", f"Найдено {len(topics)} тем", True)
         await client.disconnect()
-        return topic_ids
+        return topics
+        
     except Exception as e:
         await ai_logger.log_error(e, "Получение тем", "Проверь права доступа к группе")
         await client.disconnect()
@@ -117,8 +141,6 @@ async def get_topic_ids(ai_logger):
 async def process_albums(limit=100):
     ai_logger = AILogger(None)
     await ai_logger.log_step("Запуск бота", f"Начинаю обработку {limit} сообщений", True)
-
-    topic_ids = await get_topic_ids(ai_logger)
 
     if not os.path.exists(SESSION_B64_FILE):
         await ai_logger.log_step("Сессия", "Файл сессии отсутствует", False)
@@ -204,8 +226,6 @@ async def process_albums(limit=100):
         topic = detect_topic(text)
         photos = album["photo_paths"]
 
-        thread_id = topic_ids.get(topic) if topic_ids else None
-
         success = False
         for attempt in range(3):
             try:
@@ -214,7 +234,12 @@ async def process_albums(limit=100):
                 ai_logger.client = client
                 group = await client.get_entity(TARGET_GROUP_ID)
 
-                # === ОТПРАВКА ЧЕРЕЗ send_file (ПОДДЕРЖИВАЕТ parse_mode И ТЕМЫ) ===
+                # === ПОЛУЧАЕМ ИЛИ СОЗДАЁМ ТЕМУ ===
+                thread_id = await get_or_create_topic(client, group, topic)
+                if not thread_id:
+                    raise Exception(f"Не удалось создать тему {topic}")
+
+                # === ОТПРАВКА ЧЕРЕЗ send_file ===
                 caption = f"📌 **{topic}**\n\n{text}" if text else None
                 await client.send_file(
                     entity=group,
@@ -224,7 +249,7 @@ async def process_albums(limit=100):
                     message_thread_id=thread_id
                 )
 
-                await ai_logger.log_step(f"Отправка альбома #{idx+1}", f"{len(photos)} фото в тему {topic}", True)
+                await ai_logger.log_step(f"Отправка альбома #{idx+1}", f"{len(photos)} фото в тему '{topic}'", True)
                 total_sent += 1
                 success = True
                 await client.disconnect()
@@ -232,19 +257,14 @@ async def process_albums(limit=100):
 
             except Exception as e:
                 await ai_logger.log_error(e, f"Попытка #{attempt+1} отправки", f"Ошибка: {e}")
-                if attempt == 2:
-                    await ai_logger.suggest_fix(
-                        "SendMessageRequest не поддерживает parse_mode",
-                        "Используй client.send_file() с caption и parse_mode"
-                    )
                 await client.disconnect()
                 await asyncio.sleep(2)
 
         if not success:
-            await ai_logger.send_report("🚫 **Альбом не отправлен после 3 попыток. Пропускаю.**", "WARNING")
+            await ai_logger.send_report(f"🚫 Альбом #{idx+1} не отправлен после 3 попыток. Пропускаю.", "WARNING")
 
     await ai_logger.log_step("Завершение", f"Обработано {total_sent} альбомов", True)
-    await ai_logger.send_report("🎉 **Бот завершил работу!** Готов к следующему запуску.")
+    await ai_logger.send_report(f"🎉 **Бот завершил работу!** Отправлено {total_sent} альбомов.")
     return True
 
 # ===== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =====
@@ -293,7 +313,7 @@ def detect_topic(text):
         "кроссовки": "Кроссовки [LUXURY SNEAKERS]",
         "часы": "Часы",
         "ремень": "Ремни",
-        "сумка": "Ассортимент",
+        "сумка": "Сумки Hermes",  # ИСПРАВЛЕНО: теперь сумка идёт в Сумки Hermes
         "очки": "Очки",
         "украшения": "Ювелирные украшения",
         "шапка": "Шарфы и шапки",
@@ -302,9 +322,12 @@ def detect_topic(text):
     if not text:
         return "Ассортимент"
     text_lower = text.lower()
+    
+    # ПРИОРИТЕТ: сначала проверяем обувь, потом сумки, потом всё остальное
     if 'кроссовки' in text_lower: return "Кроссовки [LUXURY SNEAKERS]"
     if 'обувь' in text_lower: return "Обувь Hermes"
     if 'сумка' in text_lower: return "Сумки Hermes"
+    
     for key, topic in TOPIC_MAP.items():
         if key in text_lower:
             return topic
