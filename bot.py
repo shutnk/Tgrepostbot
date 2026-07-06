@@ -8,8 +8,7 @@ from flask import Flask, jsonify
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest, SendMultiMediaRequest
 from telethon.tl.functions.channels import GetFullChannelRequest
-from telethon.tl.types import InputMediaPhoto, InputPhoto, MessageMediaPhoto
-from telethon.tl.types import InputForumTopic
+from telethon.tl.types import InputMediaPhoto
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
