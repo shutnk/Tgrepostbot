@@ -8,7 +8,7 @@ import traceback
 from flask import Flask, jsonify
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest, SendMultiMediaRequest, SendMessageRequest
-from telethon.tl.types import InputMediaPhoto, MessageEntityBold, MessageEntityTextUrl
+from telethon.tl.types import InputMediaPhoto
 
 # ===== НАСТРОЙКИ =====
 API_ID = 17349
@@ -19,6 +19,7 @@ SOURCE_CHANNEL = '@blvckrooom'
 TARGET_GROUP_ID = -1003991874844
 MENTION_REPLACE = '@esen_baevich'
 
+# Твой Telegram ID для отчётов
 ADMIN_ID = 5468112563
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,7 @@ logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
 
-# ===== ЛОГГЕР С ОТПРАВКОЙ В TELEGRAM =====
+# ===== ЛОГГЕР =====
 class AILogger:
     def __init__(self, client=None):
         self.client = client
@@ -211,21 +212,19 @@ async def process_albums(limit=100):
                     file_id = await client.upload_file(p)
                     input_photos.append(InputMediaPhoto(id=file_id))
 
-                # 2. Отправляем подпись через SendMessageRequest (поддерживает темы!)
+                # 2. Отправляем подпись (без reply_to_msg_id!)
                 if input_photos and text:
                     await client(SendMessageRequest(
                         peer=group,
                         message=f"📌 **{topic}**\n\n{text}",
-                        reply_to_msg_id=None,
-                        message_thread_id=thread_id,
-                        parse_mode="markdown"
+                        parse_mode="markdown",
+                        message_thread_id=thread_id
                     ))
 
-                # 3. Отправляем медиагруппу (без подписи)
+                # 3. Отправляем медиагруппу (без reply_to_msg_id)
                 await client(SendMultiMediaRequest(
                     peer=group,
                     media=input_photos,
-                    reply_to_msg_id=None,
                     message_thread_id=thread_id
                 ))
 
@@ -238,8 +237,8 @@ async def process_albums(limit=100):
                 await ai_logger.log_error(e, f"Попытка #{attempt+1} отправки", f"Ошибка: {e}")
                 if attempt == 2:
                     await ai_logger.suggest_fix(
-                        f"MessageMethods.send_message() не принимает message_thread_id",
-                        "Используй SendMessageRequest вместо send_message()"
+                        "SendMessageRequest не принимает reply_to_msg_id",
+                        "Убери reply_to_msg_id, он не нужен для отправки в тему"
                     )
                 await client.disconnect()
                 await asyncio.sleep(2)
