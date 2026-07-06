@@ -112,7 +112,6 @@ async def get_topic_ids():
     await client.connect()
     try:
         group = await client.get_entity(TARGET_GROUP_ID)
-        # === ИСПРАВЛЕННЫЙ ВЫЗОВ ===
         result = await client(GetForumTopicsRequest(
             channel=group,
             offset_date=0,
@@ -221,7 +220,6 @@ async def process_albums(limit=100):
             await client.connect()
             group = await client.get_entity(TARGET_GROUP_ID)
             try:
-                # === ИСПРАВЛЕННЫЙ ВЫЗОВ ===
                 result = await client(CreateForumTopicRequest(
                     channel=group,
                     title=topic
