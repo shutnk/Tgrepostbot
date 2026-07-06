@@ -9,7 +9,6 @@ from flask import Flask, jsonify
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest, SendMultiMediaRequest
 from telethon.tl.types import InputMediaPhoto
-from telethon.errors import RPCError
 
 # ===== НАСТРОЙКИ =====
 API_ID = 17349
@@ -23,27 +22,34 @@ MENTION_REPLACE = '@esen_baevich'
 # Твой Telegram ID для получения отчётов
 ADMIN_ID = 5468112563
 
+# Глобальный логгер
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
 app = Flask(__name__)
 
 # ===== ЛОГГЕР С ОТПРАВКОЙ В TELEGRAM =====
 class AILogger:
-    def __init__(self, client):
+    def __init__(self, client=None):
         self.client = client
         self.log_buffer = []
         
     async def send_report(self, message, level="INFO"):
         """Отправляет отчёт админу в Telegram"""
+        if not self.client:
+            logger.warning("⚠️ Клиент не подключён, отчёт не отправлен")
+            return
         try:
             await self.client.send_message(ADMIN_ID, f"🤖 **{level}**\n{message}")
-        except:
-            pass  # Если не получилось отправить — игнорируем
+        except Exception as e:
+            logger.error(f"❌ Не удалось отправить отчёт: {e}")
     
     async def log_step(self, step_name, details, success=True):
         """Логирует шаг с деталями"""
         emoji = "✅" if success else "❌"
         msg = f"{emoji} **{step_name}**\n{details}"
-        await self.send_report(msg, "STEP")
         logger.info(msg)
+        await self.send_report(msg, "STEP")
     
     async def log_error(self, error, context="", solution_hint=""):
         """Логирует ошибку и предлагает решение"""
@@ -52,8 +58,8 @@ class AILogger:
             msg += f"💡 **Предлагаю:** {solution_hint}"
         else:
             msg += "🤔 **Анализирую...** пытаюсь исправить автоматически"
-        await self.send_report(msg, "ERROR")
         logger.error(msg)
+        await self.send_report(msg, "ERROR")
     
     async def suggest_fix(self, problem, solution_code):
         """Предлагает заменить код"""
@@ -61,7 +67,7 @@ class AILogger:
         await self.send_report(msg, "FIX SUGGESTION")
 
 # ===== ОСНОВНАЯ ЛОГИКА =====
-async def safe_execute(func, logger, *args, **kwargs):
+async def safe_execute(func, logger_obj, *args, **kwargs):
     """Безопасное выполнение с автоматическим исправлением"""
     try:
         result = await func(*args, **kwargs)
@@ -69,12 +75,12 @@ async def safe_execute(func, logger, *args, **kwargs):
     except Exception as e:
         error_msg = str(e)
         trace = traceback.format_exc()
-        await logger.log_error(error_msg, f"Функция: {func.__name__}", "Перезапускаю с новыми параметрами...")
+        await logger_obj.log_error(error_msg, f"Функция: {func.__name__}", "Перезапускаю с новыми параметрами...")
         return None, error_msg
 
-async def get_topic_ids(logger):
+async def get_topic_ids(ai_logger):
     if not os.path.exists(SESSION_B64_FILE):
-        await logger.log_step("Проверка сессии", "Сессия не найдена!", False)
+        await ai_logger.log_step("Проверка сессии", "Сессия не найдена!", False)
         return {}
 
     try:
@@ -85,12 +91,13 @@ async def get_topic_ids(logger):
             f.write(decoded)
         os.chmod(SESSION_FILE, 0o600)
     except Exception as e:
-        await logger.log_error(e, "Декодирование сессии", "Проверь корректность session.b64")
+        await ai_logger.log_error(e, "Декодирование сессии", "Проверь корректность session.b64")
         return {}
 
     client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
     await client.connect()
-    await logger.log_step("Подключение к аккаунту", "Успешно", True)
+    ai_logger.client = client
+    await ai_logger.log_step("Подключение к аккаунту", "Успешно", True)
     
     try:
         dialogs = await client.get_dialogs()
@@ -101,7 +108,7 @@ async def get_topic_ids(logger):
                 break
         
         if not target_dialog:
-            await logger.log_step("Поиск группы", f"Группа {TARGET_GROUP_ID} не найдена", False)
+            await ai_logger.log_step("Поиск группы", f"Группа {TARGET_GROUP_ID} не найдена", False)
             await client.disconnect()
             return {}
         
@@ -109,19 +116,18 @@ async def get_topic_ids(logger):
         if hasattr(target_dialog, 'forum_topics') and target_dialog.forum_topics:
             for topic in target_dialog.forum_topics:
                 topic_ids[topic.title] = topic.id
-            await logger.log_step("Загрузка тем", f"Найдено {len(topic_ids)} тем", True)
+            await ai_logger.log_step("Загрузка тем", f"Найдено {len(topic_ids)} тем", True)
         else:
-            await logger.log_step("Загрузка тем", "Группа не форум, темы отсутствуют", True)
+            await ai_logger.log_step("Загрузка тем", "Группа не форум, темы отсутствуют", True)
         
         await client.disconnect()
         return topic_ids
     except Exception as e:
-        await logger.log_error(e, "Получение тем", "Проверь права доступа к группе")
+        await ai_logger.log_error(e, "Получение тем", "Проверь права доступа к группе")
         await client.disconnect()
         return {}
 
 async def process_albums(limit=100):
-    logger = logging.getLogger(__name__)
     ai_logger = AILogger(None)
     
     await ai_logger.log_step("Запуск бота", f"Начинаю обработку {limit} сообщений", True)
@@ -221,17 +227,17 @@ async def process_albums(limit=100):
             try:
                 client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
                 await client.connect()
+                ai_logger.client = client
                 group = await client.get_entity(TARGET_GROUP_ID)
                 
                 input_photos = []
                 for idx_photo, p in enumerate(photos):
-                    # Исправленный способ: без caption в InputMediaPhoto
                     file_id = await client.upload_file(p)
                     input_photos.append(InputMediaPhoto(
                         id=file_id
                     ))
                 
-                # Отправляем первое фото с подписью отдельно
+                # Отправляем подпись отдельно
                 if input_photos and text:
                     await client.send_message(group, f"📌 **{topic}**\n\n{text}", message_thread_id=thread_id, parse_mode="markdown")
                 
