@@ -207,7 +207,6 @@ async def process_albums(limit=100):
 
         thread_id = topic_ids.get(topic) if topic_ids else None
 
-        # === ОТПРАВКА С ПОВТОРАМИ ===
         success = False
         for attempt in range(3):
             try:
@@ -222,7 +221,7 @@ async def process_albums(limit=100):
                     file_id = await client.upload_file(p)
                     input_photos.append(InputMediaPhoto(id=file_id))
 
-                # 2. Отправляем подпись
+                # 2. Отправляем подпись (в тему)
                 if input_photos and text:
                     await client(SendMessageRequest(
                         peer=group,
@@ -231,11 +230,10 @@ async def process_albums(limit=100):
                         message_thread_id=thread_id
                     ))
 
-                # 3. Отправляем медиагруппу (ИСПРАВЛЕНО: multi_media вместо media)
+                # 3. Отправляем медиагруппу (БЕЗ message_thread_id, но после подписи)
                 await client(SendMultiMediaRequest(
                     peer=group,
-                    multi_media=input_photos,
-                    message_thread_id=thread_id
+                    multi_media=input_photos
                 ))
 
                 await ai_logger.log_step(f"Отправка альбома #{idx+1}", f"{len(photos)} фото в тему {topic}", True)
@@ -248,8 +246,8 @@ async def process_albums(limit=100):
                 await ai_logger.log_error(e, f"Попытка #{attempt+1} отправки", f"Ошибка: {e}")
                 if attempt == 2:
                     await ai_logger.suggest_fix(
-                        "SendMultiMediaRequest не принимает 'media'",
-                        "Используй 'multi_media' вместо 'media' в SendMultiMediaRequest"
+                        "SendMultiMediaRequest не принимает message_thread_id",
+                        "Убери message_thread_id из SendMultiMediaRequest, отправляй подпись отдельно"
                     )
                 await client.disconnect()
                 await asyncio.sleep(2)
