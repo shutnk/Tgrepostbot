@@ -1,28 +1,27 @@
 import os
 import re
-import time
 import asyncio
 import logging
 import base64
 import json
-import requests
 from flask import Flask, jsonify
 from telethon import TelegramClient
-from telethon.tl.functions.messages import GetHistoryRequest
-from telethon.tl.functions.channels import GetForumTopicsRequest, CreateForumTopicRequest
+from telethon.tl.functions.messages import GetHistoryRequest, SendMultiMediaRequest
+from telethon.tl.functions.channels import GetFullChannelRequest
+from telethon.tl.types import InputMediaPhoto, InputPhoto, MessageMediaPhoto
+from telethon.tl.types import InputForumTopic
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
-TARGET_GROUP_ID = -1003991874844
-MENTION_REPLACE = '@esen_baevich'
-
+# ===== НАСТРОЙКИ =====
 API_ID = 17349
 API_HASH = '344583e45741c457fe1862106095a5eb'
 SESSION_FILE = 'session.session'
 SESSION_B64_FILE = 'session.b64'
 SOURCE_CHANNEL = '@blvckrooom'
+TARGET_GROUP_ID = -1003991874844
+MENTION_REPLACE = '@esen_baevich'
 
 app = Flask(__name__)
 
@@ -112,14 +111,11 @@ async def get_topic_ids():
     await client.connect()
     try:
         group = await client.get_entity(TARGET_GROUP_ID)
-        result = await client(GetForumTopicsRequest(
-            channel=group,
-            offset_date=0,
-            offset_id=0,
-            offset_topic=0,
-            limit=100
-        ))
-        topic_ids = {t.title: t.id for t in result.topics}
+        full = await client(GetFullChannelRequest(group))
+        topic_ids = {}
+        if full.forum_topics:
+            for topic in full.forum_topics:
+                topic_ids[topic.title] = topic.id
         logger.info(f"✅ Загружено {len(topic_ids)} тем")
         await client.disconnect()
         return topic_ids
@@ -215,51 +211,34 @@ async def process_albums(limit=100):
 
         thread_id = topic_ids.get(topic)
         if not thread_id:
-            logger.warning(f"⚠️ Тема '{topic}' не найдена, пытаюсь создать...")
-            client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
-            await client.connect()
+            logger.warning(f"⚠️ Тема '{topic}' не найдена, пропускаем")
+            continue
+
+        # === ОТПРАВКА ОТ ИМЕНИ АККАУНТА ===
+        client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+        await client.connect()
+        try:
             group = await client.get_entity(TARGET_GROUP_ID)
-            try:
-                result = await client(CreateForumTopicRequest(
-                    channel=group,
-                    title=topic
+            input_photos = []
+            for idx, p in enumerate(photos):
+                input_photos.append(InputMediaPhoto(
+                    id=await client.upload_file(p),
+                    caption=text if idx == 0 else None,
+                    parse_mode="markdown"
                 ))
-                thread_id = result.id
-                topic_ids[topic] = thread_id
-                logger.info(f"✅ Тема '{topic}' создана (ID: {thread_id})")
-            except Exception as e:
-                logger.error(f"❌ Ошибка создания темы {topic}: {e}")
+            
+            await client(SendMultiMediaRequest(
+                peer=group,
+                media=input_photos,
+                reply_to_msg_id=None,
+                message_thread_id=thread_id
+            ))
+            logger.info(f"📚 Альбом ({len(photos)} фото) отправлен в {topic} от @nurikadambol")
+            total_sent += 1
+        except Exception as e:
+            logger.error(f"❌ Ошибка отправки альбома: {e}")
+        finally:
             await client.disconnect()
-
-        if thread_id:
-            media = []
-            for idx, p in enumerate(photos):
-                media.append({
-                    "type": "photo",
-                    "media": f"attach://photo{idx}.jpg"
-                })
-                if idx == 0:
-                    media[-1]["caption"] = f"📌 **{topic}**\n\n{text}"
-                    media[-1]["parse_mode"] = "Markdown"
-
-            files = {}
-            for idx, p in enumerate(photos):
-                files[f"photo{idx}.jpg"] = open(p, 'rb')
-
-            url = f"https://api.telegram.org/bot{TOKEN}/sendMediaGroup"
-            payload = {
-                "chat_id": TARGET_GROUP_ID,
-                "media": json.dumps(media),
-                "message_thread_id": thread_id
-            }
-            try:
-                requests.post(url, data=payload, files=files, timeout=30)
-                for f in files.values():
-                    f.close()
-                logger.info(f"📚 Альбом ({len(photos)} фото) в {topic} (ID: {thread_id})")
-                total_sent += 1
-            except Exception as e:
-                logger.error(f"❌ Ошибка отправки альбома: {e}")
 
     logger.info(f"✅ Обработано {total_sent} альбомов")
     return True
