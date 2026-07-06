@@ -6,12 +6,10 @@ import base64
 import json
 import traceback
 import sys
-import random
 from flask import Flask, jsonify
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest, SendMultiMediaRequest, SendMessageRequest
-from telethon.tl.types import InputMediaPhoto, InputPhoto
-from telethon.tl.types import MessageEntityBold
+from telethon.tl.types import InputMediaPhoto, InputPhoto, MessageEntityBold
 
 # ===== НАСТРОЙКИ =====
 API_ID = 17349
@@ -217,16 +215,14 @@ async def process_albums(limit=100):
                 ai_logger.client = client
                 group = await client.get_entity(TARGET_GROUP_ID)
 
-                # 1. Загружаем фото
+                # 1. Загружаем фото и создаём InputMediaPhoto через InputPhoto (работает в 1.44.0)
                 input_photos = []
                 for p in photos:
                     file_id = await client.upload_file(p)
-                    # Добавляем случайный ID для каждого фото
-                    random_id = random.randint(0, 2**63 - 1)
-                    input_photos.append(InputMediaPhoto(
-                        id=file_id,
-                        random_id=random_id
-                    ))
+                    # Используем InputPhoto вместо прямого file_id
+                    input_photo = InputPhoto(id=file_id, access_hash=0, file_reference=b'')
+                    input_media_photo = InputMediaPhoto(id=input_photo)
+                    input_photos.append(input_media_photo)
 
                 # 2. Отправляем подпись (в тему)
                 if input_photos and text:
@@ -237,7 +233,7 @@ async def process_albums(limit=100):
                         message_thread_id=thread_id
                     ))
 
-                # 3. Отправляем медиагруппу (без message_thread_id, но после подписи)
+                # 3. Отправляем медиагруппу
                 await client(SendMultiMediaRequest(
                     peer=group,
                     multi_media=input_photos
@@ -254,7 +250,7 @@ async def process_albums(limit=100):
                 if attempt == 2:
                     await ai_logger.suggest_fix(
                         "Random ID empty in SendMultiMediaRequest",
-                        "Добавь random_id в каждый InputMediaPhoto"
+                        "Используй InputPhoto внутри InputMediaPhoto вместо прямого file_id"
                     )
                 await client.disconnect()
                 await asyncio.sleep(2)
