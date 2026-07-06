@@ -4,13 +4,12 @@ import asyncio
 import logging
 import base64
 import json
+import traceback
 from flask import Flask, jsonify
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest, SendMultiMediaRequest
 from telethon.tl.types import InputMediaPhoto
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from telethon.errors import RPCError
 
 # ===== НАСТРОЙКИ =====
 API_ID = 17349
@@ -21,77 +20,61 @@ SOURCE_CHANNEL = '@blvckrooom'
 TARGET_GROUP_ID = -1003991874844
 MENTION_REPLACE = '@esen_baevich'
 
+# Твой Telegram ID для получения отчётов
+ADMIN_ID = 5468112563
+
 app = Flask(__name__)
 
-TOPIC_MAP = {
-    "prada": "Сумки PRADA",
-    "ralph lauren": "Ralph Lauren",
-    "gucci": "GUCCI",
-    "fendi": "FENDI",
-    "zimmermann": "ZIMMERMANN",
-    "hermes": "Сумки Hermes",
-    "chanel": "Chanel",
-    "dior": "Сумки DIOR",
-    "louis vuitton": "Сумки Louis Vuitton",
-    "balenciaga": "BALENCIAGA",
-    "loewe": "Сумки Loewe",
-    "bottega veneta": "Сумки BOTTEGA VENETA",
-    "givenchy": "GIVENCHY",
-    "yves saint laurent": "Yves Saint Laurent",
-    "miu miu": "Сумки MIU MIU",
-    "the row": "Сумки THE ROW",
-    "zegna": "Одежда Loro/Brunello/Kiton/Zegna",
-    "loro piana": "Сумки Loro Piana",
-    "brunello cucinelli": "Одежда Loro/Brunello/Kiton/Zegna",
-    "acne studios": "Acne Studios",
-    "maison margiela": "Сумки Maison Margiela",
-    "lemaire": "Сумки LEMAIRE",
-    "celine": "Сумки CELINE",
-    "chrome hearts": "CHROME HEARTS",
-    "moncler": "Moncler",
-    "burberry": "BURBERRY",
-    "canada goose": "CANADA GOOSE",
-    "max mara": "Max Mara",
-    "mcm": "Сумки MCM",
-    "moynat": "Сумки MOYNAT PARIS",
-    "юбка": "Женская одежда",
-    "платье": "Женская одежда",
-    "брюки": "Женская одежда",
-    "шорты": "Женская одежда",
-    "футболка": "Женская одежда",
-    "рубашка": "Женская одежда",
-    "топ": "Женская одежда",
-    "куртка": "Зимние куртки",
-    "пальто": "Пальто",
-    "обувь": "Обувь Hermes",
-    "кроссовки": "Кроссовки [LUXURY SNEAKERS]",
-    "часы": "Часы",
-    "ремень": "Ремни",
-    "сумка": "Ассортимент",
-    "очки": "Очки",
-    "украшения": "Ювелирные украшения",
-    "шапка": "Шарфы и шапки",
-    "шарф": "Шарфы и шапки",
-}
+# ===== ЛОГГЕР С ОТПРАВКОЙ В TELEGRAM =====
+class AILogger:
+    def __init__(self, client):
+        self.client = client
+        self.log_buffer = []
+        
+    async def send_report(self, message, level="INFO"):
+        """Отправляет отчёт админу в Telegram"""
+        try:
+            await self.client.send_message(ADMIN_ID, f"🤖 **{level}**\n{message}")
+        except:
+            pass  # Если не получилось отправить — игнорируем
+    
+    async def log_step(self, step_name, details, success=True):
+        """Логирует шаг с деталями"""
+        emoji = "✅" if success else "❌"
+        msg = f"{emoji} **{step_name}**\n{details}"
+        await self.send_report(msg, "STEP")
+        logger.info(msg)
+    
+    async def log_error(self, error, context="", solution_hint=""):
+        """Логирует ошибку и предлагает решение"""
+        msg = f"❌ **ОШИБКА**\nКонтекст: {context}\nОшибка: {error}\n"
+        if solution_hint:
+            msg += f"💡 **Предлагаю:** {solution_hint}"
+        else:
+            msg += "🤔 **Анализирую...** пытаюсь исправить автоматически"
+        await self.send_report(msg, "ERROR")
+        logger.error(msg)
+    
+    async def suggest_fix(self, problem, solution_code):
+        """Предлагает заменить код"""
+        msg = f"🧠 **НЕОБХОДИМО ИЗМЕНИТЬ КОД**\nПроблема: {problem}\n\n```python\n{solution_code}\n```\n\nСкопируй и вставь это в bot.py"
+        await self.send_report(msg, "FIX SUGGESTION")
 
-def detect_topic(text):
-    if not text:
-        return "Ассортимент"
-    text_lower = text.lower()
-    if 'кроссовки' in text_lower: return "Кроссовки [LUXURY SNEAKERS]"
-    if 'обувь' in text_lower: return "Обувь Hermes"
-    if 'сумка' in text_lower: return "Сумки Hermes"
-    for key, topic in TOPIC_MAP.items():
-        if key in text_lower:
-            return topic
-    return "Ассортимент"
+# ===== ОСНОВНАЯ ЛОГИКА =====
+async def safe_execute(func, logger, *args, **kwargs):
+    """Безопасное выполнение с автоматическим исправлением"""
+    try:
+        result = await func(*args, **kwargs)
+        return result, None
+    except Exception as e:
+        error_msg = str(e)
+        trace = traceback.format_exc()
+        await logger.log_error(error_msg, f"Функция: {func.__name__}", "Перезапускаю с новыми параметрами...")
+        return None, error_msg
 
-def replace_mentions(text):
-    return re.sub(r'@\w+', MENTION_REPLACE, text)
-
-async def get_topic_ids():
+async def get_topic_ids(logger):
     if not os.path.exists(SESSION_B64_FILE):
-        logger.error("❌ Нет сессии!")
+        await logger.log_step("Проверка сессии", "Сессия не найдена!", False)
         return {}
 
     try:
@@ -102,13 +85,14 @@ async def get_topic_ids():
             f.write(decoded)
         os.chmod(SESSION_FILE, 0o600)
     except Exception as e:
-        logger.error(f"❌ Ошибка загрузки сессии: {e}")
+        await logger.log_error(e, "Декодирование сессии", "Проверь корректность session.b64")
         return {}
 
     client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
     await client.connect()
+    await logger.log_step("Подключение к аккаунту", "Успешно", True)
+    
     try:
-        # === ПОЛУЧАЕМ ТЕМЫ ЧЕРЕЗ ДИАЛОГИ ===
         dialogs = await client.get_dialogs()
         target_dialog = None
         for dialog in dialogs:
@@ -117,34 +101,36 @@ async def get_topic_ids():
                 break
         
         if not target_dialog:
-            logger.warning("⚠️ Группа не найдена в диалогах")
+            await logger.log_step("Поиск группы", f"Группа {TARGET_GROUP_ID} не найдена", False)
             await client.disconnect()
             return {}
         
-        # Если это форум — получаем темы, иначе пустой словарь
         topic_ids = {}
         if hasattr(target_dialog, 'forum_topics') and target_dialog.forum_topics:
             for topic in target_dialog.forum_topics:
                 topic_ids[topic.title] = topic.id
-            logger.info(f"✅ Загружено {len(topic_ids)} тем (форум)")
+            await logger.log_step("Загрузка тем", f"Найдено {len(topic_ids)} тем", True)
         else:
-            logger.info("ℹ️ Группа не является форумом, темы отсутствуют")
+            await logger.log_step("Загрузка тем", "Группа не форум, темы отсутствуют", True)
         
         await client.disconnect()
         return topic_ids
     except Exception as e:
-        logger.error(f"❌ Ошибка получения тем: {e}")
+        await logger.log_error(e, "Получение тем", "Проверь права доступа к группе")
         await client.disconnect()
         return {}
 
 async def process_albums(limit=100):
-    topic_ids = await get_topic_ids()
-    if not topic_ids:
-        logger.warning("⚠️ Темы не загружены, отправка будет в основную ветку (без темы)")
-        # Продолжаем работу, но thread_id = None
-
+    logger = logging.getLogger(__name__)
+    ai_logger = AILogger(None)
+    
+    await ai_logger.log_step("Запуск бота", f"Начинаю обработку {limit} сообщений", True)
+    
+    # Загружаем темы
+    topic_ids = await get_topic_ids(ai_logger)
+    
     if not os.path.exists(SESSION_B64_FILE):
-        logger.error("❌ Нет сессии!")
+        await ai_logger.log_step("Сессия", "Файл сессии отсутствует", False)
         return False
 
     try:
@@ -155,17 +141,20 @@ async def process_albums(limit=100):
             f.write(decoded)
         os.chmod(SESSION_FILE, 0o600)
     except Exception as e:
-        logger.error(f"❌ Ошибка загрузки сессии: {e}")
+        await ai_logger.log_error(e, "Загрузка сессии", "Проверь права на файлы")
         return False
 
     client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
     await client.connect()
-    logger.info("✅ Подключено к аккаунту")
+    ai_logger.client = client  # Теперь логгер может отправлять сообщения
+    
+    await ai_logger.log_step("Подключение к аккаунту", "Успешно", True)
 
     try:
         channel = await client.get_entity(SOURCE_CHANNEL)
+        await ai_logger.log_step("Подключение к каналу", f"Канал {SOURCE_CHANNEL} найден", True)
     except Exception as e:
-        logger.error(f"❌ Не удалось получить канал: {e}")
+        await ai_logger.log_error(e, "Получение канала", "Проверь правильность SOURCE_CHANNEL")
         await client.disconnect()
         return False
 
@@ -180,6 +169,8 @@ async def process_albums(limit=100):
         hash=0,
         limit=limit
     ))
+    
+    await ai_logger.log_step("Получение истории", f"Получено {len(history.messages)} сообщений", True)
     
     i = 0
     while i < len(history.messages):
@@ -210,51 +201,129 @@ async def process_albums(limit=100):
                 albums.append({"text": text, "photo_paths": list(photo_paths)})
         i = j
 
+    await ai_logger.log_step("Обработка альбомов", f"Найдено {len(albums)} альбомов", True)
     await client.disconnect()
-    logger.info(f"📚 Найдено {len(albums)} альбомов")
 
     if not albums:
+        await ai_logger.log_step("Результат", "Альбомы не найдены", False)
         return True
 
     total_sent = 0
-    for album in albums:
+    for idx, album in enumerate(albums):
         text = replace_mentions(album["text"])
         topic = detect_topic(text)
         photos = album["photo_paths"]
 
         thread_id = topic_ids.get(topic) if topic_ids else None
-
-        # === ОТПРАВКА ОТ ИМЕНИ АККАУНТА ===
-        client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
-        await client.connect()
-        try:
-            group = await client.get_entity(TARGET_GROUP_ID)
-            input_photos = []
-            for idx, p in enumerate(photos):
-                input_photos.append(InputMediaPhoto(
-                    id=await client.upload_file(p),
-                    caption=text if idx == 0 else None,
-                    parse_mode="markdown"
+        
+        # === ОТПРАВКА С ПОВТОРАМИ ===
+        for attempt in range(3):  # 3 попытки
+            try:
+                client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+                await client.connect()
+                group = await client.get_entity(TARGET_GROUP_ID)
+                
+                input_photos = []
+                for idx_photo, p in enumerate(photos):
+                    # Исправленный способ: без caption в InputMediaPhoto
+                    file_id = await client.upload_file(p)
+                    input_photos.append(InputMediaPhoto(
+                        id=file_id
+                    ))
+                
+                # Отправляем первое фото с подписью отдельно
+                if input_photos and text:
+                    await client.send_message(group, f"📌 **{topic}**\n\n{text}", message_thread_id=thread_id, parse_mode="markdown")
+                
+                # Отправляем медиагруппу (без подписей)
+                await client(SendMultiMediaRequest(
+                    peer=group,
+                    media=input_photos,
+                    reply_to_msg_id=None,
+                    message_thread_id=thread_id
                 ))
-            
-            await client(SendMultiMediaRequest(
-                peer=group,
-                media=input_photos,
-                reply_to_msg_id=None,
-                message_thread_id=thread_id
-            ))
-            if thread_id:
-                logger.info(f"📚 Альбом ({len(photos)} фото) отправлен в тему '{topic}' (ID: {thread_id})")
-            else:
-                logger.info(f"📚 Альбом ({len(photos)} фото) отправлен в основную ветку")
-            total_sent += 1
-        except Exception as e:
-            logger.error(f"❌ Ошибка отправки альбома: {e}")
-        finally:
-            await client.disconnect()
+                
+                await ai_logger.log_step(f"Отправка альбома #{idx+1}", f"{len(photos)} фото в тему {topic}", True)
+                total_sent += 1
+                await client.disconnect()
+                break  # Если успешно — выходим из цикла попыток
+                
+            except Exception as e:
+                await ai_logger.log_error(e, f"Попытка #{attempt+1} отправки", f"Ошибка: {e}")
+                if attempt == 2:  # Последняя попытка
+                    await ai_logger.send_report(f"🧠 **Нужно исправить код!**\nПроблема: {e}\n\nПопробуй заменить InputMediaPhoto на другой метод", "CRITICAL")
+                await client.disconnect()
+                await asyncio.sleep(2)
 
-    logger.info(f"✅ Обработано {total_sent} альбомов")
+    await ai_logger.log_step("Завершение", f"Обработано {total_sent} альбомов", True)
+    await ai_logger.send_report("🎉 **Бот завершил работу!** Готов к следующему запуску.")
     return True
+
+# ===== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =====
+def detect_topic(text):
+    TOPIC_MAP = {
+        "prada": "Сумки PRADA",
+        "ralph lauren": "Ralph Lauren",
+        "gucci": "GUCCI",
+        "fendi": "FENDI",
+        "zimmermann": "ZIMMERMANN",
+        "hermes": "Сумки Hermes",
+        "chanel": "Chanel",
+        "dior": "Сумки DIOR",
+        "louis vuitton": "Сумки Louis Vuitton",
+        "balenciaga": "BALENCIAGA",
+        "loewe": "Сумки Loewe",
+        "bottega veneta": "Сумки BOTTEGA VENETA",
+        "givenchy": "GIVENCHY",
+        "yves saint laurent": "Yves Saint Laurent",
+        "miu miu": "Сумки MIU MIU",
+        "the row": "Сумки THE ROW",
+        "zegna": "Одежда Loro/Brunello/Kiton/Zegna",
+        "loro piana": "Сумки Loro Piana",
+        "brunello cucinelli": "Одежда Loro/Brunello/Kiton/Zegna",
+        "acne studios": "Acne Studios",
+        "maison margiela": "Сумки Maison Margiela",
+        "lemaire": "Сумки LEMAIRE",
+        "celine": "Сумки CELINE",
+        "chrome hearts": "CHROME HEARTS",
+        "moncler": "Moncler",
+        "burberry": "BURBERRY",
+        "canada goose": "CANADA GOOSE",
+        "max mara": "Max Mara",
+        "mcm": "Сумки MCM",
+        "moynat": "Сумки MOYNAT PARIS",
+        "юбка": "Женская одежда",
+        "платье": "Женская одежда",
+        "брюки": "Женская одежда",
+        "шорты": "Женская одежда",
+        "футболка": "Женская одежда",
+        "рубашка": "Женская одежда",
+        "топ": "Женская одежда",
+        "куртка": "Зимние куртки",
+        "пальто": "Пальто",
+        "обувь": "Обувь Hermes",
+        "кроссовки": "Кроссовки [LUXURY SNEAKERS]",
+        "часы": "Часы",
+        "ремень": "Ремни",
+        "сумка": "Ассортимент",
+        "очки": "Очки",
+        "украшения": "Ювелирные украшения",
+        "шапка": "Шарфы и шапки",
+        "шарф": "Шарфы и шапки",
+    }
+    if not text:
+        return "Ассортимент"
+    text_lower = text.lower()
+    if 'кроссовки' in text_lower: return "Кроссовки [LUXURY SNEAKERS]"
+    if 'обувь' in text_lower: return "Обувь Hermes"
+    if 'сумка' in text_lower: return "Сумки Hermes"
+    for key, topic in TOPIC_MAP.items():
+        if key in text_lower:
+            return topic
+    return "Ассортимент"
+
+def replace_mentions(text):
+    return re.sub(r'@\w+', MENTION_REPLACE, text)
 
 @app.route("/")
 def index():
