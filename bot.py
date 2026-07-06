@@ -8,8 +8,7 @@ import traceback
 import sys
 from flask import Flask, jsonify
 from telethon import TelegramClient
-from telethon.tl.functions.messages import GetHistoryRequest, SendMessageRequest
-from telethon.tl.types import InputMediaPhoto
+from telethon.tl.functions.messages import GetHistoryRequest
 
 # ===== НАСТРОЙКИ =====
 API_ID = 17349
@@ -215,21 +214,14 @@ async def process_albums(limit=100):
                 ai_logger.client = client
                 group = await client.get_entity(TARGET_GROUP_ID)
 
-                # 1. Отправляем подпись (в тему)
-                if text:
-                    await client(SendMessageRequest(
-                        peer=group,
-                        message=f"📌 **{topic}**\n\n{text}",
-                        parse_mode="markdown",
-                        message_thread_id=thread_id
-                    ))
-
-                # 2. Отправляем медиагруппу через send_file (100% рабочий способ)
+                # === ОТПРАВКА ЧЕРЕЗ send_file (ПОДДЕРЖИВАЕТ parse_mode И ТЕМЫ) ===
+                caption = f"📌 **{topic}**\n\n{text}" if text else None
                 await client.send_file(
                     entity=group,
                     file=photos,
-                    message_thread_id=thread_id,
-                    parse_mode="markdown"
+                    caption=caption,
+                    parse_mode="markdown",
+                    message_thread_id=thread_id
                 )
 
                 await ai_logger.log_step(f"Отправка альбома #{idx+1}", f"{len(photos)} фото в тему {topic}", True)
@@ -242,8 +234,8 @@ async def process_albums(limit=100):
                 await ai_logger.log_error(e, f"Попытка #{attempt+1} отправки", f"Ошибка: {e}")
                 if attempt == 2:
                     await ai_logger.suggest_fix(
-                        "SendMultiMediaRequest не работает",
-                        "Используй client.send_file(entity, file=photos, message_thread_id=thread_id)"
+                        "SendMessageRequest не поддерживает parse_mode",
+                        "Используй client.send_file() с caption и parse_mode"
                     )
                 await client.disconnect()
                 await asyncio.sleep(2)
