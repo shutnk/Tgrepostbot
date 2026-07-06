@@ -5,6 +5,7 @@ import logging
 import base64
 import json
 import traceback
+import sys
 from flask import Flask, jsonify
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest, SendMultiMediaRequest, SendMessageRequest
@@ -19,7 +20,6 @@ SOURCE_CHANNEL = '@blvckrooom'
 TARGET_GROUP_ID = -1003991874844
 MENTION_REPLACE = '@esen_baevich'
 
-# Твой Telegram ID для отчётов
 ADMIN_ID = 5468112563
 
 logger = logging.getLogger(__name__)
@@ -31,6 +31,8 @@ app = Flask(__name__)
 class AILogger:
     def __init__(self, client=None):
         self.client = client
+        self.error_count = 0
+        self.max_errors = 3
 
     async def send_report(self, message, level="INFO"):
         if not self.client:
@@ -47,11 +49,17 @@ class AILogger:
         await self.send_report(msg, "STEP")
 
     async def log_error(self, error, context="", solution_hint=""):
-        msg = f"❌ **ОШИБКА**\nКонтекст: {context}\nОшибка: {error}\n"
+        self.error_count += 1
+        msg = f"❌ **ОШИБКА #{self.error_count}**\nКонтекст: {context}\nОшибка: {error}\n"
         if solution_hint:
             msg += f"💡 **Предлагаю:** {solution_hint}"
         logger.error(msg)
         await self.send_report(msg, "ERROR")
+
+        if self.error_count >= self.max_errors:
+            await self.send_report("🚨 **Достигнут лимит ошибок. Бот завершает работу.**", "CRITICAL")
+            logger.critical("Достигнут лимит ошибок. Завершение работы.")
+            sys.exit(1)
 
     async def suggest_fix(self, problem, solution_code):
         msg = f"🧠 **НЕОБХОДИМО ИЗМЕНИТЬ КОД**\nПроблема: {problem}\n\n```python\n{solution_code}\n```"
@@ -199,6 +207,8 @@ async def process_albums(limit=100):
 
         thread_id = topic_ids.get(topic) if topic_ids else None
 
+        # === ОТПРАВКА С ПОВТОРАМИ ===
+        success = False
         for attempt in range(3):
             try:
                 client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
@@ -212,7 +222,7 @@ async def process_albums(limit=100):
                     file_id = await client.upload_file(p)
                     input_photos.append(InputMediaPhoto(id=file_id))
 
-                # 2. Отправляем подпись (без reply_to_msg_id!)
+                # 2. Отправляем подпись
                 if input_photos and text:
                     await client(SendMessageRequest(
                         peer=group,
@@ -221,15 +231,16 @@ async def process_albums(limit=100):
                         message_thread_id=thread_id
                     ))
 
-                # 3. Отправляем медиагруппу (без reply_to_msg_id)
+                # 3. Отправляем медиагруппу (ИСПРАВЛЕНО: multi_media вместо media)
                 await client(SendMultiMediaRequest(
                     peer=group,
-                    media=input_photos,
+                    multi_media=input_photos,
                     message_thread_id=thread_id
                 ))
 
                 await ai_logger.log_step(f"Отправка альбома #{idx+1}", f"{len(photos)} фото в тему {topic}", True)
                 total_sent += 1
+                success = True
                 await client.disconnect()
                 break
 
@@ -237,11 +248,14 @@ async def process_albums(limit=100):
                 await ai_logger.log_error(e, f"Попытка #{attempt+1} отправки", f"Ошибка: {e}")
                 if attempt == 2:
                     await ai_logger.suggest_fix(
-                        "SendMessageRequest не принимает reply_to_msg_id",
-                        "Убери reply_to_msg_id, он не нужен для отправки в тему"
+                        "SendMultiMediaRequest не принимает 'media'",
+                        "Используй 'multi_media' вместо 'media' в SendMultiMediaRequest"
                     )
                 await client.disconnect()
                 await asyncio.sleep(2)
+
+        if not success:
+            await ai_logger.send_report("🚫 **Альбом не отправлен после 3 попыток. Пропускаю.**", "WARNING")
 
     await ai_logger.log_step("Завершение", f"Обработано {total_sent} альбомов", True)
     await ai_logger.send_report("🎉 **Бот завершил работу!** Готов к следующему запуску.")
