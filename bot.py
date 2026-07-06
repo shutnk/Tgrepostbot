@@ -8,8 +8,8 @@ import traceback
 import sys
 from flask import Flask, jsonify
 from telethon import TelegramClient
-from telethon.tl.functions.messages import GetHistoryRequest, SendMultiMediaRequest, SendMessageRequest
-from telethon.tl.types import InputMediaPhoto, InputPhoto, MessageEntityBold
+from telethon.tl.functions.messages import GetHistoryRequest, SendMessageRequest
+from telethon.tl.types import InputMediaPhoto
 
 # ===== НАСТРОЙКИ =====
 API_ID = 17349
@@ -215,17 +215,8 @@ async def process_albums(limit=100):
                 ai_logger.client = client
                 group = await client.get_entity(TARGET_GROUP_ID)
 
-                # 1. Загружаем фото и создаём InputMediaPhoto через InputPhoto (работает в 1.44.0)
-                input_photos = []
-                for p in photos:
-                    file_id = await client.upload_file(p)
-                    # Используем InputPhoto вместо прямого file_id
-                    input_photo = InputPhoto(id=file_id, access_hash=0, file_reference=b'')
-                    input_media_photo = InputMediaPhoto(id=input_photo)
-                    input_photos.append(input_media_photo)
-
-                # 2. Отправляем подпись (в тему)
-                if input_photos and text:
+                # 1. Отправляем подпись (в тему)
+                if text:
                     await client(SendMessageRequest(
                         peer=group,
                         message=f"📌 **{topic}**\n\n{text}",
@@ -233,11 +224,13 @@ async def process_albums(limit=100):
                         message_thread_id=thread_id
                     ))
 
-                # 3. Отправляем медиагруппу
-                await client(SendMultiMediaRequest(
-                    peer=group,
-                    multi_media=input_photos
-                ))
+                # 2. Отправляем медиагруппу через send_file (100% рабочий способ)
+                await client.send_file(
+                    entity=group,
+                    file=photos,
+                    message_thread_id=thread_id,
+                    parse_mode="markdown"
+                )
 
                 await ai_logger.log_step(f"Отправка альбома #{idx+1}", f"{len(photos)} фото в тему {topic}", True)
                 total_sent += 1
@@ -249,8 +242,8 @@ async def process_albums(limit=100):
                 await ai_logger.log_error(e, f"Попытка #{attempt+1} отправки", f"Ошибка: {e}")
                 if attempt == 2:
                     await ai_logger.suggest_fix(
-                        "Random ID empty in SendMultiMediaRequest",
-                        "Используй InputPhoto внутри InputMediaPhoto вместо прямого file_id"
+                        "SendMultiMediaRequest не работает",
+                        "Используй client.send_file(entity, file=photos, message_thread_id=thread_id)"
                     )
                 await client.disconnect()
                 await asyncio.sleep(2)
