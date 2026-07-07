@@ -6,9 +6,11 @@ import base64
 import json
 import traceback
 import sys
+import random
 from flask import Flask, jsonify
 from telethon import TelegramClient
-from telethon.tl.functions.messages import GetHistoryRequest
+from telethon.tl.functions.messages import GetHistoryRequest, SendMessageRequest
+from telethon.tl.types import InputMediaPhoto
 
 # ===== НАСТРОЙКИ =====
 API_ID = 17349
@@ -16,7 +18,7 @@ API_HASH = '344583e45741c457fe1862106095a5eb'
 SESSION_FILE = 'session.session'
 SESSION_B64_FILE = 'session.b64'
 SOURCE_CHANNEL = '@blvckrooom'
-TARGET_GROUP_ID = -1003991874844
+TARGET_GROUP_ID = -1003991874844  # @trifferi_katalog
 MENTION_REPLACE = '@esen_baevich'
 
 ADMIN_ID = 5468112563
@@ -31,7 +33,7 @@ class AILogger:
     def __init__(self, client=None):
         self.client = client
         self.error_count = 0
-        self.max_errors = 3
+        self.max_errors = 5  # Увеличил, так как создание тем требует времени
 
     async def send_report(self, message, level="INFO"):
         if not self.client:
@@ -66,21 +68,45 @@ class AILogger:
 
 # ===== ОСНОВНАЯ ЛОГИКА =====
 async def get_or_create_topic(client, group, topic_name):
-    """Получает ID темы, если нет — создаёт её через create_forum_topic()"""
+    """Создаёт тему через SendMessageRequest (работает в 1.44.0)"""
     try:
-        # Получаем список диалогов и ищем тему
+        # Сначала пробуем найти тему через диалоги
         dialogs = await client.get_dialogs()
         for dialog in dialogs:
-            if dialog.entity.id == group.id and dialog.message_thread_id:
-                # Если это тема с таким названием
-                if dialog.name == topic_name:
-                    return dialog.message_thread_id
-
-        # Если темы нет — создаём через create_forum_topic (работает в 1.44.0)
-        topic = await client.create_forum_topic(group, topic_name)
-        logger.info(f"✅ Создана новая тема: {topic_name} (ID: {topic.id})")
-        return topic.id
-
+            if dialog.entity.id == group.id and hasattr(dialog, 'forum_topics'):
+                if dialog.forum_topics:
+                    for topic in dialog.forum_topics:
+                        if topic.title == topic_name:
+                            return topic.id
+        
+        # Если темы нет — создаём её через отправку первого сообщения
+        # В Telethon 1.44.0 это автоматически создаёт тему
+        random_id = random.randint(0, 2**63 - 1)
+        
+        # Создаём тему, отправляя сообщение с reply_to_msg_id=0
+        await client(SendMessageRequest(
+            peer=group,
+            message=f"📌 **{topic_name}**\n\n(Эта тема создана автоматически ботом)",
+            reply_to_msg_id=0,  # Ключевой трюк для создания темы в 1.44.0
+            random_id=random_id
+        ))
+        
+        logger.info(f"✅ Создана новая тема: {topic_name}")
+        
+        # Ждём, пока тема появится в диалогах
+        await asyncio.sleep(2)
+        
+        # Ищем ID созданной темы
+        dialogs = await client.get_dialogs()
+        for dialog in dialogs:
+            if dialog.entity.id == group.id and hasattr(dialog, 'forum_topics'):
+                if dialog.forum_topics:
+                    for topic in dialog.forum_topics:
+                        if topic.title == topic_name:
+                            return topic.id
+        
+        return None
+        
     except Exception as e:
         logger.error(f"❌ Ошибка при создании темы {topic_name}: {e}")
         return None
@@ -110,12 +136,14 @@ async def get_topic_ids(ai_logger):
         group = await client.get_entity(TARGET_GROUP_ID)
         topics = {}
         
-        # Собираем темы через диалоги
         dialogs = await client.get_dialogs()
         for dialog in dialogs:
-            if dialog.entity.id == group.id and dialog.message_thread_id:
-                topics[dialog.name] = dialog.message_thread_id
-            
+            if dialog.entity.id == group.id and hasattr(dialog, 'forum_topics'):
+                if dialog.forum_topics:
+                    for topic in dialog.forum_topics:
+                        topics[topic.title] = topic.id
+                    break
+        
         await ai_logger.log_step("Загрузка тем", f"Найдено {len(topics)} тем", True)
         await client.disconnect()
         return topics
@@ -256,68 +284,140 @@ async def process_albums(limit=100):
 
 # ===== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =====
 def detect_topic(text):
+    # Полный список тем со скриншотов (в точности как в @trifferi_katalog)
     TOPIC_MAP = {
-        "prada": "Сумки PRADA",
-        "ralph lauren": "Ralph Lauren",
+        # Обувь
+        "обувь hermes": "Обувь Hermes",
+        "обувь chanel": "Обувь Chanel",
+        "обувь alaïa": "Обувь Alaïa",
+        "обувь loro piana": "Лоферы Loro Piana",
+        "обувь louis vuitton": "Обувь Louis Vuitton",
+        "женские сапоги": "Женские сапоги",
+        "женская обувь": "Женская обувь",
+        "классическая мужская обувь": "Классическая мужская обувь",
+        "классическая мужская обувь из экзотической кожи": "Классическая мужская обувь из экзотической кожи",
+        "обувь для пляжа и бассейна": "Обувь для пляжа и бассейна",
+        "обувь для детей": "Обувь для детей",
+        "кроссовки": "Кроссовки [LUXURY SNEAKERS]",
+        "кроссовки gucci": "Кроссовки GUCCI",
+        "кроссовки loewe": "Кроссовки LOEWE",
+        "кроссовки balenciaga": "Кроссовки BALENCIAGA",
+        "кроссовки louis vuitton": "Кроссовки Louis Vuitton",
+        
+        # Сумки
+        "сумки hermes": "Сумки Hermes",
+        "сумки chanel": "Сумки CHANEL",
+        "сумки dior": "Сумки DIOR",
+        "сумки louis vuitton": "Сумки Louis Vuitton",
+        "сумки balenciaga": "Сумки BALENCIAGA",
+        "сумки prada": "Сумки PRADA",
+        "сумки goyard": "Сумки GOYARD",
+        "сумки loewe": "Сумки Loewe",
+        "сумки bottega veneta": "Сумки BOTTEGA VENETA",
+        "сумки celine": "Сумки CELINE",
+        "сумки fendi": "Сумки FENDI",
+        "сумки miu miu": "Сумки MIU MIU",
+        "сумки the row": "Сумки THE ROW",
+        "сумки ralph lauren": "Сумки Ralph Lauren",
+        "сумки mcm": "Сумки MCM",
+        "сумки moynat paris": "Сумки MOYNAT PARIS",
+        "сумки acne studios": "Сумки Acne Studios",
+        "сумки lemaire": "Сумки LEMAIRE",
+        "сумки maison margiela": "Сумки Maison Margiela",
+        "сумки chroma hearts": "Сумки Chrome Hearts",
+        "сумки jacquemus": "Сумки Jacquemus",
+        "сумки bulgari": "Сумки BVLGARI",
+        "сумки manolo blahnik": "Сумки Manolo Blahnik",
+        "сумки roger vivier": "Сумки Roger Vivier",
+        "сумки dolce gabbana": "Сумки Dolce Gabbana",
+        "сумки alaïa": "Сумки Alaïa",
+        "сумки schiaparelli": "Сумки Schiaparelli",
+        "мужские сумки": "Мужские Сумки",
+        "чемоданы и дорожные сумки": "Чемоданы и дорожные сумки",
+        "обвесы на сумку": "Обвесы на сумку",
+        "сумка": "Сумки Hermes",  # Дефолт для сумок
+        
+        # Одежда
+        "женская одежда": "Женская одежда",
+        "женская верхняя одежда": "Женская верхняя одежда(Кожа,кашемир)",
+        "мужская верхняя одежда": "Мужская верхняя одежда",
+        "зимние куртки": "Зимние куртки",
+        "пальто": "Пальто",
+        "arc'teryx": "Arcteryx",
+        "canada goose": "CANADA GOOSE",
+        "moncler": "Moncler",
+        "burberry": "BURBERRY",
+        "max mara": "Max Mara",
+        "zegna": "Одежда Loro/Brunello/Kiton/Zegna",
+        "loro piana": "Одежда Loro/Brunello/Kiton/Zegna",
+        "brunello cucinelli": "Одежда Loro/Brunello/Kiton/Zegna",
+        "kiton": "Одежда Loro/Brunello/Kiton/Zegna",
+        "одежда для детей": "Одежда для детей",
+        "купальники и пляжная одежда": "Купальники и пляжная одежда",
+        
+        # Аксессуары
+        "часы": "Часы",
+        "ремень hermes": "Ремень Hermes",
+        "ремни": "Ремни",
+        "очки": "Очки",
+        "украшения": "Ювелирные украшения",
+        "украшения(бижутерия)": "Украшения(бижутерия)",
+        "украшения schiaparelli": "Украшения Schiaparelli",
+        "chrome hearts украшения": "CHROME HEARTS Украшения из серебра",
+        "шарфы и шапки": "Шарфы и шапки",
+        "товары для дома": "Товары для дома",
+        
+        # Бренды и категории
+        "hermes": "HERMES",
+        "chanel": "Chanel",
+        "dior": "DIOR",
+        "louis vuitton": "Louis Vuitton",
+        "prada": "PRADA",
         "gucci": "GUCCI",
         "fendi": "FENDI",
-        "zimmermann": "ZIMMERMANN",
-        "hermes": "Сумки Hermes",
-        "chanel": "Chanel",
-        "dior": "Сумки DIOR",
-        "louis vuitton": "Сумки Louis Vuitton",
         "balenciaga": "BALENCIAGA",
-        "loewe": "Сумки Loewe",
-        "bottega veneta": "Сумки BOTTEGA VENETA",
+        "loewe": "Loewe",
+        "bottega veneta": "BOTTEGA VENETA",
+        "celine": "CELINE",
         "givenchy": "GIVENCHY",
+        "ysl": "Yves Saint Laurent",
         "yves saint laurent": "Yves Saint Laurent",
-        "miu miu": "Сумки MIU MIU",
-        "the row": "Сумки THE ROW",
-        "zegna": "Одежда Loro/Brunello/Kiton/Zegna",
-        "loro piana": "Сумки Loro Piana",
-        "brunello cucinelli": "Одежда Loro/Brunello/Kiton/Zegna",
+        "miu miu": "MIU MIU",
+        "the row": "THE ROW",
+        "ralph lauren": "Ralph Lauren",
+        "mcm": "MCM",
         "acne studios": "Acne Studios",
-        "maison margiela": "Сумки Maison Margiela",
-        "lemaire": "Сумки LEMAIRE",
-        "celine": "Сумки CELINE",
+        "maison margiela": "MAISON MARGIELA",
         "chrome hearts": "CHROME HEARTS",
+        "jacquemus": "Jacquemus",
         "moncler": "Moncler",
         "burberry": "BURBERRY",
         "canada goose": "CANADA GOOSE",
+        "arc'teryx": "Arcteryx",
         "max mara": "Max Mara",
-        "mcm": "Сумки MCM",
-        "moynat": "Сумки MOYNAT PARIS",
-        "юбка": "Женская одежда",
-        "платье": "Женская одежда",
-        "брюки": "Женская одежда",
-        "шорты": "Женская одежда",
-        "футболка": "Женская одежда",
-        "рубашка": "Женская одежда",
-        "топ": "Женская одежда",
-        "куртка": "Зимние куртки",
-        "пальто": "Пальто",
-        "обувь": "Обувь Hermes",
-        "кроссовки": "Кроссовки [LUXURY SNEAKERS]",
-        "часы": "Часы",
-        "ремень": "Ремни",
-        "сумка": "Сумки Hermes",  # ИСПРАВЛЕНО: теперь сумка идёт в Сумки Hermes
-        "очки": "Очки",
-        "украшения": "Ювелирные украшения",
-        "шапка": "Шарфы и шапки",
-        "шарф": "Шарфы и шапки",
+        "well done": "WELLDONE",
+        "welldone": "WELLDONE",
+        "ami paris": "AMI Paris",
+        "alexander wang": "alexander wang",
+        "enfants riches deprimes": "ENFANTS RICHES DEPRIMES",
+        "dolce gabbana": "Dolce&Gabbana",
+        "dolce&gabbana": "Dolce&Gabbana",
+        "schiaparelli": "Schiaparelli",
+        "exclusive": "EXCLUSIVE",
+        "assortiment": "Ассортимент",
+        "ассортимент": "Ассортимент",
     }
+    
     if not text:
         return "Ассортимент"
+    
     text_lower = text.lower()
     
-    # ПРИОРИТЕТ: сначала проверяем обувь, потом сумки, потом всё остальное
-    if 'кроссовки' in text_lower: return "Кроссовки [LUXURY SNEAKERS]"
-    if 'обувь' in text_lower: return "Обувь Hermes"
-    if 'сумка' in text_lower: return "Сумки Hermes"
-    
+    # Проверяем точные совпадения сначала
     for key, topic in TOPIC_MAP.items():
         if key in text_lower:
             return topic
+    
     return "Ассортимент"
 
 def replace_mentions(text):
