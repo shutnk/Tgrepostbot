@@ -10,7 +10,6 @@ import random
 from flask import Flask, jsonify
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest, SendMessageRequest
-from telethon.tl.functions.channels import GetForumTopicsRequest
 
 # ===== НАСТРОЙКИ =====
 API_ID = 17349
@@ -168,7 +167,7 @@ class AILogger:
 
 # ===== БОТ-МЕНЕДЖЕР: СОЗДАЁТ ВСЕ ТЕМЫ ИЗ СПИСКА =====
 async def create_all_topics():
-    """Создаёт все темы из ALL_TOPICS при запуске."""
+    """Создаёт все темы из ALL_TOPICS при запуске, используя get_dialogs()."""
     logger.info("🚀 Запуск менеджера тем: создаю темы из списка...")
     
     if not os.path.exists(SESSION_B64_FILE):
@@ -192,20 +191,15 @@ async def create_all_topics():
     try:
         group = await client.get_entity(TARGET_GROUP_ID)
         
-        # Получаем существующие темы
+        # Получаем существующие темы через get_dialogs()
         existing_topics = set()
-        try:
-            result = await client(GetForumTopicsRequest(
-                channel=group,
-                offset_date=0,
-                offset_id=0,
-                offset_topic=0,
-                limit=100
-            ))
-            for topic in result.topics:
-                existing_topics.add(topic.title)
-        except:
-            pass  # Если форум не включён — просто пропускаем
+        dialogs = await client.get_dialogs()
+        for dialog in dialogs:
+            if dialog.entity.id == TARGET_GROUP_ID and hasattr(dialog, 'forum_topics'):
+                if dialog.forum_topics:
+                    for topic in dialog.forum_topics:
+                        existing_topics.add(topic.title)
+                    break
 
         # Создаём недостающие темы
         created_count = 0
