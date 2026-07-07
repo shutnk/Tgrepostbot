@@ -9,7 +9,6 @@ import sys
 from flask import Flask, jsonify
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
-from telethon.tl.functions.channels import CreateForumTopicRequest, GetForumTopicsRequest
 
 # ===== НАСТРОЙКИ =====
 API_ID = 17349
@@ -67,27 +66,20 @@ class AILogger:
 
 # ===== ОСНОВНАЯ ЛОГИКА =====
 async def get_or_create_topic(client, group, topic_name):
-    """Получает ID темы, если нет — создаёт её."""
+    """Получает ID темы, если нет — создаёт её через create_forum_topic()"""
     try:
-        # Получаем существующие темы
-        result = await client(GetForumTopicsRequest(
-            channel=group,
-            offset_date=0,
-            offset_id=0,
-            offset_topic=0,
-            limit=100
-        ))
-        for topic in result.topics:
-            if topic.title == topic_name:
-                return topic.id
+        # Получаем список диалогов и ищем тему
+        dialogs = await client.get_dialogs()
+        for dialog in dialogs:
+            if dialog.entity.id == group.id and dialog.message_thread_id:
+                # Если это тема с таким названием
+                if dialog.name == topic_name:
+                    return dialog.message_thread_id
 
-        # Если темы нет — создаём
-        new_topic = await client(CreateForumTopicRequest(
-            channel=group,
-            title=topic_name
-        ))
-        logger.info(f"✅ Создана новая тема: {topic_name} (ID: {new_topic.id})")
-        return new_topic.id
+        # Если темы нет — создаём через create_forum_topic (работает в 1.44.0)
+        topic = await client.create_forum_topic(group, topic_name)
+        logger.info(f"✅ Создана новая тема: {topic_name} (ID: {topic.id})")
+        return topic.id
 
     except Exception as e:
         logger.error(f"❌ Ошибка при создании темы {topic_name}: {e}")
@@ -118,16 +110,11 @@ async def get_topic_ids(ai_logger):
         group = await client.get_entity(TARGET_GROUP_ID)
         topics = {}
         
-        # Получаем все темы через GetForumTopicsRequest
-        result = await client(GetForumTopicsRequest(
-            channel=group,
-            offset_date=0,
-            offset_id=0,
-            offset_topic=0,
-            limit=100
-        ))
-        for topic in result.topics:
-            topics[topic.title] = topic.id
+        # Собираем темы через диалоги
+        dialogs = await client.get_dialogs()
+        for dialog in dialogs:
+            if dialog.entity.id == group.id and dialog.message_thread_id:
+                topics[dialog.name] = dialog.message_thread_id
             
         await ai_logger.log_step("Загрузка тем", f"Найдено {len(topics)} тем", True)
         await client.disconnect()
