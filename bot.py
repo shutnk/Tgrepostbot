@@ -6,7 +6,6 @@ import base64
 import json
 import traceback
 import sys
-import requests
 import random
 from flask import Flask, jsonify
 from telethon import TelegramClient
@@ -23,13 +22,115 @@ TARGET_GROUP_ID = -1003991874844  # @trifferi_katalog
 MENTION_REPLACE = '@esen_baevich'
 
 ADMIN_ID = 5468112563
-TOPIC_BOT_TOKEN = '8575421763:AAF6qrCi8nymXXMeEodNh0W2I4VfxMuk-Ac'
 MAIN_BOT_TOKEN = '8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4'
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
+
+# ===== СПИСОК ВСЕХ ТЕМ (ПО ТВОИМ СКРИНШОТАМ) =====
+ALL_TOPICS = [
+    "Arcteryx",
+    "GIVENCHY",
+    "Классическая мужская одежда",
+    "MAISON MARGIELA",
+    "WELLDONE",
+    "AMIRI",
+    "Женская обувь II",
+    "Сумки Roger Vivier",
+    "Сумки Dolce Gabbana",
+    "Сумки Alaïa",
+    "Зимние куртки",
+    "Обувь для детей",
+    "Сумки Ralph Lauren",
+    "Сумки MCM",
+    "Ассортимент",
+    "Пальто",
+    "ENFANTS RICHES DEPRIMES",
+    "Ювелирные украшения",
+    "Обувь Louis Vuitton",
+    "Сумки MOYNAT PARIS",
+    "Сумки CELINE",
+    "Лоферы Loro Piana",
+    "Сумки Maison Margiela",
+    "CELINE",
+    "Сумки Acne Studios",
+    "MIU MIU",
+    "Сумки LEMAIRE",
+    "CANADA GOOSE",
+    "Yves Saint Laurent",
+    "AMI Paris",
+    "Кроссовки LOEWE",
+    "Кроссовки GUCCI",
+    "Чемоданы и дорожные сумки",
+    "Сумки BVLGARI",
+    "Сумки Manolo Blahnik",
+    "Обувь Alaïa",
+    "BURBERRY",
+    "Moncler",
+    "Обвесы на сумку",
+    "Обувь для пляжа и бассейна",
+    "CHROME HEARTS Украшения из серебра",
+    "Сумки Chrome Hearts",
+    "Товары для дома",
+    "Сумки MIU MIU",
+    "Сумки YSL",
+    "Ремни",
+    "Dolce&Gabbana",
+    "Купальники и пляжная одежда",
+    "Loewe",
+    "BALENCIAGA",
+    "FENDI",
+    "GUCCI",
+    "Сумки Jacquemus",
+    "Сумки GOYARD",
+    "Ralph Lauren",
+    "HERMES",
+    "BOTTEGA VENETA",
+    "Одежда для детей",
+    "Кроссовки [LUXURY SNEAKERS]",
+    "Женские сапоги",
+    "Очки",
+    "Украшения(бижутерия)",
+    "Кроссовки BALENCIAGA",
+    "Классическая мужская обувь",
+    "Кроссовки Louis Vuitton",
+    "CHROME HEARTS",
+    "Классическая мужская обувь из экзотической кожи",
+    "Женская обувь",
+    "Женская верхняя одежда(Кожа,кашемир)",
+    "Max Mara",
+    "Украшения Schiaparelli",
+    "Сумки Schiaparelli",
+    "Мужская верхняя одежда",
+    "Обувь Chanel",
+    "Acne Studios",
+    "Chanel",
+    "Обувь Loro/Brunello/Kiton/Zegna",
+    "ZIMMERMANN",
+    "Сумки THE ROW",
+    "Сумки BALENCIAGA",
+    "Сумки Louis Vuitton",
+    "Мужские Сумки",
+    "Сумки DIOR",
+    "Сумки Loro Piana",
+    "Сумки BOTTEGA VENETA",
+    "Сумки PRADA",
+    "Шарфы и шапки",
+    "Часы",
+    "Сумки Hermes",
+    "Обувь Hermes",
+    "Ремень Hermes",
+    "EXCLUSIVE",
+    "DIOR",
+    "PRADA",
+    "Louis Vuitton",
+    "Сумки CHANEL",
+    "Сумки Loewe",
+    "Женская одежда",
+    "Одежда Loro/Brunello/Kiton/Zegna"
+]
 
 # ===== ЛОГГЕР =====
 class AILogger:
@@ -65,29 +166,14 @@ class AILogger:
             logger.critical("Достигнут лимит ошибок. Завершение работы.")
             sys.exit(1)
 
-# ===== БОТ-МЕНЕДЖЕР ТЕМ (ВНУТРИ ПРОЦЕССА) =====
-async def topic_manager_loop():
-    """Вечный цикл для бота-менеджера тем, использующий твою сессию."""
-    logger.info("🤖 Бот-менеджер тем @trifferitopicbot запущен в фоне")
+# ===== БОТ-МЕНЕДЖЕР: СОЗДАЁТ ВСЕ ТЕМЫ ИЗ СПИСКА =====
+async def create_all_topics():
+    """Создаёт все темы из ALL_TOPICS при запуске."""
+    logger.info("🚀 Запуск менеджера тем: создаю темы из списка...")
     
-    client = TelegramClient('topic_manager_session', API_ID, API_HASH)
-    await client.start(bot_token=TOPIC_BOT_TOKEN)
-    
-    while True:
-        try:
-            # Получаем обновления (Long Polling через Telethon)
-            # В реальном проекте лучше использовать @client.on(events.NewMessage)
-            # Но здесь мы просто ждём 5 секунд
-            await asyncio.sleep(5)
-        except Exception as e:
-            logger.error(f"Ошибка в менеджере тем: {e}")
-            await asyncio.sleep(10)
-
-async def create_topic_via_session(topic_name):
-    """Создаёт тему через сессию (от имени @nurikadambol)."""
     if not os.path.exists(SESSION_B64_FILE):
         logger.error("❌ Нет сессии!")
-        return None
+        return
 
     try:
         with open(SESSION_B64_FILE, 'r') as f:
@@ -98,15 +184,16 @@ async def create_topic_via_session(topic_name):
         os.chmod(SESSION_FILE, 0o600)
     except Exception as e:
         logger.error(f"❌ Ошибка загрузки сессии: {e}")
-        return None
+        return
 
     client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
     await client.connect()
-    
+
     try:
         group = await client.get_entity(TARGET_GROUP_ID)
         
-        # Проверяем, есть ли уже такая тема
+        # Получаем существующие темы
+        existing_topics = set()
         try:
             result = await client(GetForumTopicsRequest(
                 channel=group,
@@ -116,49 +203,38 @@ async def create_topic_via_session(topic_name):
                 limit=100
             ))
             for topic in result.topics:
-                if topic.title == topic_name:
-                    logger.info(f"✅ Тема '{topic_name}' уже существует (ID: {topic.id})")
-                    await client.disconnect()
-                    return topic.id
+                existing_topics.add(topic.title)
         except:
-            pass
-        
-        # Создаём тему через SendMessageRequest
-        random_id = random.randint(0, 2**63 - 1)
-        await client(SendMessageRequest(
-            peer=group,
-            message=f"📌 **{topic_name}**\n\n(Тема создана)",
-            reply_to_msg_id=0,
-            random_id=random_id
-        ))
-        
-        logger.info(f"✅ Команда на создание темы '{topic_name}' отправлена")
-        await asyncio.sleep(3)
-        
-        # Получаем ID созданной темы
-        try:
-            result = await client(GetForumTopicsRequest(
-                channel=group,
-                offset_date=0,
-                offset_id=0,
-                offset_topic=0,
-                limit=100
-            ))
-            for topic in result.topics:
-                if topic.title == topic_name:
-                    logger.info(f"✅ Тема '{topic_name}' создана (ID: {topic.id})")
-                    await client.disconnect()
-                    return topic.id
-        except:
-            pass
-        
-        await client.disconnect()
-        return None
+            pass  # Если форум не включён — просто пропускаем
+
+        # Создаём недостающие темы
+        created_count = 0
+        for topic_name in ALL_TOPICS:
+            if topic_name in existing_topics:
+                logger.info(f"ℹ️ Тема '{topic_name}' уже существует, пропускаю")
+                continue
+            
+            # Создаём тему через SendMessageRequest
+            try:
+                random_id = random.randint(0, 2**63 - 1)
+                await client(SendMessageRequest(
+                    peer=group,
+                    message=f"📌 **{topic_name}**\n\n(Тема создана автоматически)",
+                    reply_to_msg_id=0,
+                    random_id=random_id
+                ))
+                logger.info(f"✅ Создана тема: {topic_name}")
+                created_count += 1
+                await asyncio.sleep(1)  # Пауза, чтобы не спамить Telegram
+            except Exception as e:
+                logger.error(f"❌ Ошибка создания темы '{topic_name}': {e}")
+
+        logger.info(f"🎉 Менеджер тем завершил работу. Создано {created_count} новых тем.")
         
     except Exception as e:
-        logger.error(f"❌ Ошибка создания темы '{topic_name}': {e}")
+        logger.error(f"❌ Ошибка в менеджере тем: {e}")
+    finally:
         await client.disconnect()
-        return None
 
 # ===== ОСНОВНОЙ БОТ (РЕПОСТЫ) =====
 async def get_topic_ids(ai_logger):
@@ -295,21 +371,21 @@ async def process_albums(limit=100):
                 ai_logger.client = client
                 group = await client.get_entity(TARGET_GROUP_ID)
 
+                # === ПОЛУЧАЕМ ТЕМУ ===
                 topic_ids = await get_topic_ids(ai_logger)
                 thread_id = topic_ids.get(topic) if topic_ids else None
 
-                # Если темы нет — создаём через менеджер
+                # Если темы нет — отправляем в General и пишем тебе
                 if not thread_id:
-                    await ai_logger.send_report(f"⚠️ Тема '{topic}' не найдена. Создаю...", "INFO")
-                    thread_id = await create_topic_via_session(topic)
-                    if thread_id:
-                        await ai_logger.send_report(f"✅ Тема '{topic}' создана (ID: {thread_id})", "SUCCESS")
-                    else:
-                        await ai_logger.send_report(f"❌ Не удалось создать тему '{topic}'. Пропускаю.", "ERROR")
-                        await client.disconnect()
-                        continue
+                    await ai_logger.send_report(
+                        f"⚠️ Новая тема обнаружена: '{topic}'\n"
+                        f"📌 Альбом отправлен в **General**.\n"
+                        f"🔧 Создай тему вручную: @trifferi_katalog → # → Create topic → '{topic}'",
+                        "WARNING"
+                    )
+                    thread_id = None
 
-                # Отправка
+                # === ОТПРАВКА ===
                 caption = f"📌 **{topic}**\n\n{text}" if text else None
                 await client.send_file(
                     entity=group,
@@ -319,7 +395,11 @@ async def process_albums(limit=100):
                     message_thread_id=thread_id
                 )
 
-                await ai_logger.log_step(f"Отправка альбома #{idx+1}", f"{len(photos)} фото в тему '{topic}'", True)
+                await ai_logger.log_step(
+                    f"Отправка альбома #{idx+1}",
+                    f"{len(photos)} фото в '{topic if thread_id else 'General'}'",
+                    True
+                )
                 total_sent += 1
                 success = True
                 await client.disconnect()
@@ -339,6 +419,7 @@ async def process_albums(limit=100):
 
 # ===== ОПРЕДЕЛЕНИЕ ТЕМЫ =====
 def detect_topic(text):
+    # Карта соответствий (из твоих скриншотов)
     TOPIC_MAP = {
         "обувь hermes": "Обувь Hermes",
         "обувь chanel": "Обувь Chanel",
@@ -466,10 +547,10 @@ def health():
     return jsonify({"status": "ok"})
 
 if __name__ == "__main__":
-    # Запускаем менеджера тем в фоне
-    asyncio.create_task(topic_manager_loop())
+    # 1. Сначала запускаем менеджер тем (создаёт все темы из списка)
+    asyncio.run(create_all_topics())
     
-    # Запускаем основной процесс
+    # 2. Затем запускаем основного бота
     asyncio.run(process_albums(limit=100))
     
     port = int(os.environ.get("PORT", 10000))
