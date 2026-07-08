@@ -7,7 +7,6 @@ import json
 import traceback
 import sys
 import random
-import shutil
 from flask import Flask, jsonify
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest, SendMessageRequest
@@ -22,113 +21,41 @@ TARGET_GROUP_ID = -1003991874844  # @trifferi_katalog
 MENTION_REPLACE = '@esen_baevich'
 
 ADMIN_ID = 5468112563
-MAIN_BOT_TOKEN = '8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4'
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
 
-# ===== СПИСОК ВСЕХ ТЕМ (ПО ТВОИМ СКРИНШОТАМ) =====
+# ===== СПИСОК ТЕМ =====
 ALL_TOPICS = [
-    "Arcteryx",
-    "GIVENCHY",
-    "Классическая мужская одежда",
-    "MAISON MARGIELA",
-    "WELLDONE",
-    "AMIRI",
-    "Женская обувь II",
-    "Сумки Roger Vivier",
-    "Сумки Dolce Gabbana",
-    "Сумки Alaïa",
-    "Зимние куртки",
-    "Обувь для детей",
-    "Сумки Ralph Lauren",
-    "Сумки MCM",
-    "Ассортимент",
-    "Пальто",
-    "ENFANTS RICHES DEPRIMES",
-    "Ювелирные украшения",
-    "Обувь Louis Vuitton",
-    "Сумки MOYNAT PARIS",
-    "Сумки CELINE",
-    "Лоферы Loro Piana",
-    "Сумки Maison Margiela",
-    "CELINE",
-    "Сумки Acne Studios",
-    "MIU MIU",
-    "Сумки LEMAIRE",
-    "CANADA GOOSE",
-    "Yves Saint Laurent",
-    "AMI Paris",
-    "Кроссовки LOEWE",
-    "Кроссовки GUCCI",
-    "Чемоданы и дорожные сумки",
-    "Сумки BVLGARI",
-    "Сумки Manolo Blahnik",
-    "Обувь Alaïa",
-    "BURBERRY",
-    "Moncler",
-    "Обвесы на сумку",
-    "Обувь для пляжа и бассейна",
-    "CHROME HEARTS Украшения из серебра",
-    "Сумки Chrome Hearts",
-    "Товары для дома",
-    "Сумки MIU MIU",
-    "Сумки YSL",
-    "Ремни",
-    "Dolce&Gabbana",
-    "Купальники и пляжная одежда",
-    "Loewe",
-    "BALENCIAGA",
-    "FENDI",
-    "GUCCI",
-    "Сумки Jacquemus",
-    "Сумки GOYARD",
-    "Ralph Lauren",
-    "HERMES",
-    "BOTTEGA VENETA",
-    "Одежда для детей",
-    "Кроссовки [LUXURY SNEAKERS]",
-    "Женские сапоги",
-    "Очки",
-    "Украшения(бижутерия)",
-    "Кроссовки BALENCIAGA",
-    "Классическая мужская обувь",
-    "Кроссовки Louis Vuitton",
-    "CHROME HEARTS",
-    "Классическая мужская обувь из экзотической кожи",
-    "Женская обувь",
-    "Женская верхняя одежда(Кожа,кашемир)",
-    "Max Mara",
-    "Украшения Schiaparelli",
-    "Сумки Schiaparelli",
-    "Мужская верхняя одежда",
-    "Обувь Chanel",
-    "Acne Studios",
-    "Chanel",
-    "Обувь Loro/Brunello/Kiton/Zegna",
-    "ZIMMERMANN",
-    "Сумки THE ROW",
-    "Сумки BALENCIAGA",
-    "Сумки Louis Vuitton",
-    "Мужские Сумки",
-    "Сумки DIOR",
-    "Сумки Loro Piana",
-    "Сумки BOTTEGA VENETA",
-    "Сумки PRADA",
-    "Шарфы и шапки",
-    "Часы",
-    "Сумки Hermes",
-    "Обувь Hermes",
-    "Ремень Hermes",
-    "EXCLUSIVE",
-    "DIOR",
-    "PRADA",
-    "Louis Vuitton",
-    "Сумки CHANEL",
-    "Сумки Loewe",
-    "Женская одежда",
+    "Arcteryx", "GIVENCHY", "Классическая мужская одежда", "MAISON MARGIELA",
+    "WELLDONE", "AMIRI", "Женская обувь II", "Сумки Roger Vivier",
+    "Сумки Dolce Gabbana", "Сумки Alaïa", "Зимние куртки", "Обувь для детей",
+    "Сумки Ralph Lauren", "Сумки MCM", "Ассортимент", "Пальто",
+    "ENFANTS RICHES DEPRIMES", "Ювелирные украшения", "Обувь Louis Vuitton",
+    "Сумки MOYNAT PARIS", "Сумки CELINE", "Лоферы Loro Piana",
+    "Сумки Maison Margiela", "CELINE", "Сумки Acne Studios", "MIU MIU",
+    "Сумки LEMAIRE", "CANADA GOOSE", "Yves Saint Laurent", "AMI Paris",
+    "Кроссовки LOEWE", "Кроссовки GUCCI", "Чемоданы и дорожные сумки",
+    "Сумки BVLGARI", "Сумки Manolo Blahnik", "Обувь Alaïa", "BURBERRY",
+    "Moncler", "Обвесы на сумку", "Обувь для пляжа и бассейна",
+    "CHROME HEARTS Украшения из серебра", "Сумки Chrome Hearts", "Товары для дома",
+    "Сумки MIU MIU", "Сумки YSL", "Ремни", "Dolce&Gabbana",
+    "Купальники и пляжная одежда", "Loewe", "BALENCIAGA", "FENDI",
+    "GUCCI", "Сумки Jacquemus", "Сумки GOYARD", "Ralph Lauren", "HERMES",
+    "BOTTEGA VENETA", "Одежда для детей", "Кроссовки [LUXURY SNEAKERS]",
+    "Женские сапоги", "Очки", "Украшения(бижутерия)", "Кроссовки BALENCIAGA",
+    "Классическая мужская обувь", "Кроссовки Louis Vuitton", "CHROME HEARTS",
+    "Классическая мужская обувь из экзотической кожи", "Женская обувь",
+    "Женская верхняя одежда(Кожа,кашемир)", "Max Mara", "Украшения Schiaparelli",
+    "Сумки Schiaparelli", "Мужская верхняя одежда", "Обувь Chanel",
+    "Acne Studios", "Chanel", "Обувь Loro/Brunello/Kiton/Zegna",
+    "ZIMMERMANN", "Сумки THE ROW", "Сумки BALENCIAGA", "Сумки Louis Vuitton",
+    "Мужские Сумки", "Сумки DIOR", "Сумки Loro Piana", "Сумки BOTTEGA VENETA",
+    "Сумки PRADA", "Шарфы и шапки", "Часы", "Сумки Hermes", "Обувь Hermes",
+    "Ремень Hermes", "EXCLUSIVE", "DIOR", "PRADA", "Louis Vuitton",
+    "Сумки CHANEL", "Сумки Loewe", "Женская одежда",
     "Одежда Loro/Brunello/Kiton/Zegna"
 ]
 
@@ -166,16 +93,14 @@ class AILogger:
             logger.critical("Достигнут лимит ошибок. Завершение работы.")
             sys.exit(1)
 
-# ===== БОТ-МЕНЕДЖЕР: СОЗДАЁТ ВСЕ ТЕМЫ ИЗ СПИСКА =====
+# ===== СОЗДАНИЕ ВСЕХ ТЕМ =====
 async def create_all_topics():
-    """Создаёт все темы из ALL_TOPICS при запуске, используя get_dialogs()."""
     logger.info("🚀 Запуск менеджера тем: создаю темы из списка...")
     
     if not os.path.exists(SESSION_B64_FILE):
         logger.error("❌ Нет сессии!")
         return
 
-    # Удаляем старый session.session, если есть
     if os.path.exists(SESSION_FILE):
         os.remove(SESSION_FILE)
 
@@ -196,7 +121,6 @@ async def create_all_topics():
     try:
         group = await client.get_entity(TARGET_GROUP_ID)
         
-        # Получаем существующие темы через get_dialogs()
         existing_topics = set()
         dialogs = await client.get_dialogs()
         for dialog in dialogs:
@@ -206,14 +130,12 @@ async def create_all_topics():
                         existing_topics.add(topic.title)
                     break
 
-        # Создаём недостающие темы
         created_count = 0
         for topic_name in ALL_TOPICS:
             if topic_name in existing_topics:
                 logger.info(f"ℹ️ Тема '{topic_name}' уже существует, пропускаю")
                 continue
             
-            # Создаём тему через SendMessageRequest
             try:
                 random_id = random.randint(0, 2**63 - 1)
                 await client(SendMessageRequest(
@@ -224,7 +146,7 @@ async def create_all_topics():
                 ))
                 logger.info(f"✅ Создана тема: {topic_name}")
                 created_count += 1
-                await asyncio.sleep(1)  # Пауза, чтобы не спамить Telegram
+                await asyncio.sleep(1)
             except Exception as e:
                 logger.error(f"❌ Ошибка создания темы '{topic_name}': {e}")
 
@@ -234,7 +156,6 @@ async def create_all_topics():
         logger.error(f"❌ Ошибка в менеджере тем: {e}")
     finally:
         await client.disconnect()
-        # Удаляем session.session после использования
         if os.path.exists(SESSION_FILE):
             os.remove(SESSION_FILE)
 
@@ -244,7 +165,6 @@ async def get_topic_ids(ai_logger):
         await ai_logger.log_step("Проверка сессии", "Сессия не найдена!", False)
         return {}
 
-    # Удаляем старый session.session, если есть
     if os.path.exists(SESSION_FILE):
         os.remove(SESSION_FILE)
 
@@ -275,7 +195,6 @@ async def get_topic_ids(ai_logger):
                     break
         await ai_logger.log_step("Загрузка тем", f"Найдено {len(topics)} тем", True)
         await client.disconnect()
-        # Удаляем session.session после использования
         if os.path.exists(SESSION_FILE):
             os.remove(SESSION_FILE)
         return topics
@@ -294,7 +213,6 @@ async def process_albums(limit=100):
         await ai_logger.log_step("Сессия", "Файл сессии отсутствует", False)
         return False
 
-    # Удаляем старый session.session, если есть
     if os.path.exists(SESSION_FILE):
         os.remove(SESSION_FILE)
 
@@ -390,21 +308,16 @@ async def process_albums(limit=100):
                 ai_logger.client = client
                 group = await client.get_entity(TARGET_GROUP_ID)
 
-                # === ПОЛУЧАЕМ ТЕМУ ===
                 topic_ids = await get_topic_ids(ai_logger)
                 thread_id = topic_ids.get(topic) if topic_ids else None
 
-                # Если темы нет — отправляем в General и пишем тебе
                 if not thread_id:
                     await ai_logger.send_report(
-                        f"⚠️ Новая тема обнаружена: '{topic}'\n"
-                        f"📌 Альбом отправлен в **General**.\n"
-                        f"🔧 Создай тему вручную: @trifferi_katalog → # → Create topic → '{topic}'",
+                        f"⚠️ Новая тема: '{topic}'\nАльбом отправлен в **General**.\nСоздай тему вручную.",
                         "WARNING"
                     )
                     thread_id = None
 
-                # === ОТПРАВКА ===
                 caption = f"📌 **{topic}**\n\n{text}" if text else None
                 await client.send_file(
                     entity=group,
@@ -442,7 +355,6 @@ async def process_albums(limit=100):
 
 # ===== ОПРЕДЕЛЕНИЕ ТЕМЫ =====
 def detect_topic(text):
-    # Карта соответствий (из твоих скриншотов)
     TOPIC_MAP = {
         "обувь hermes": "Обувь Hermes",
         "обувь chanel": "Обувь Chanel",
@@ -570,10 +482,7 @@ def health():
     return jsonify({"status": "ok"})
 
 if __name__ == "__main__":
-    # 1. Сначала запускаем менеджер тем (создаёт все темы из списка)
     asyncio.run(create_all_topics())
-    
-    # 2. Затем запускаем основного бота
     asyncio.run(process_albums(limit=100))
     
     port = int(os.environ.get("PORT", 10000))
