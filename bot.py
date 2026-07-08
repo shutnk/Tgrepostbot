@@ -7,6 +7,7 @@ import json
 import traceback
 import sys
 import random
+import shutil
 from flask import Flask, jsonify
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest, SendMessageRequest
@@ -174,6 +175,10 @@ async def create_all_topics():
         logger.error("❌ Нет сессии!")
         return
 
+    # Удаляем старый session.session, если есть
+    if os.path.exists(SESSION_FILE):
+        os.remove(SESSION_FILE)
+
     try:
         with open(SESSION_B64_FILE, 'r') as f:
             b64_data = f.read().strip()
@@ -229,12 +234,19 @@ async def create_all_topics():
         logger.error(f"❌ Ошибка в менеджере тем: {e}")
     finally:
         await client.disconnect()
+        # Удаляем session.session после использования
+        if os.path.exists(SESSION_FILE):
+            os.remove(SESSION_FILE)
 
 # ===== ОСНОВНОЙ БОТ (РЕПОСТЫ) =====
 async def get_topic_ids(ai_logger):
     if not os.path.exists(SESSION_B64_FILE):
         await ai_logger.log_step("Проверка сессии", "Сессия не найдена!", False)
         return {}
+
+    # Удаляем старый session.session, если есть
+    if os.path.exists(SESSION_FILE):
+        os.remove(SESSION_FILE)
 
     try:
         with open(SESSION_B64_FILE, 'r') as f:
@@ -263,10 +275,15 @@ async def get_topic_ids(ai_logger):
                     break
         await ai_logger.log_step("Загрузка тем", f"Найдено {len(topics)} тем", True)
         await client.disconnect()
+        # Удаляем session.session после использования
+        if os.path.exists(SESSION_FILE):
+            os.remove(SESSION_FILE)
         return topics
     except Exception as e:
         await ai_logger.log_error(e, "Получение тем", "Проверь права доступа к группе")
         await client.disconnect()
+        if os.path.exists(SESSION_FILE):
+            os.remove(SESSION_FILE)
         return {}
 
 async def process_albums(limit=100):
@@ -276,6 +293,10 @@ async def process_albums(limit=100):
     if not os.path.exists(SESSION_B64_FILE):
         await ai_logger.log_step("Сессия", "Файл сессии отсутствует", False)
         return False
+
+    # Удаляем старый session.session, если есть
+    if os.path.exists(SESSION_FILE):
+        os.remove(SESSION_FILE)
 
     try:
         with open(SESSION_B64_FILE, 'r') as f:
@@ -299,6 +320,8 @@ async def process_albums(limit=100):
     except Exception as e:
         await ai_logger.log_error(e, "Получение канала", "Проверь правильность SOURCE_CHANNEL")
         await client.disconnect()
+        if os.path.exists(SESSION_FILE):
+            os.remove(SESSION_FILE)
         return False
 
     albums = []
@@ -346,6 +369,8 @@ async def process_albums(limit=100):
 
     await ai_logger.log_step("Обработка альбомов", f"Найдено {len(albums)} альбомов", True)
     await client.disconnect()
+    if os.path.exists(SESSION_FILE):
+        os.remove(SESSION_FILE)
 
     if not albums:
         await ai_logger.log_step("Результат", "Альбомы не найдены", False)
@@ -397,11 +422,15 @@ async def process_albums(limit=100):
                 total_sent += 1
                 success = True
                 await client.disconnect()
+                if os.path.exists(SESSION_FILE):
+                    os.remove(SESSION_FILE)
                 break
 
             except Exception as e:
                 await ai_logger.log_error(e, f"Попытка #{attempt+1} отправки", f"Ошибка: {e}")
                 await client.disconnect()
+                if os.path.exists(SESSION_FILE):
+                    os.remove(SESSION_FILE)
                 await asyncio.sleep(2)
 
         if not success:
