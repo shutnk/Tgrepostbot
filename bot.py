@@ -2,6 +2,7 @@ import os
 import re
 import asyncio
 import logging
+import base64
 import json
 import traceback
 import sys
@@ -13,6 +14,8 @@ from telethon.tl.functions.messages import GetHistoryRequest, SendMessageRequest
 # ===== НАСТРОЙКИ =====
 API_ID = 17349
 API_HASH = '344583e45741c457fe1862106095a5eb'
+SESSION_FILE = 'session.session'
+SESSION_B64_FILE = 'session.b64'
 BOT_TOKEN = '8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4'
 SOURCE_CHANNEL = '@blvckrooom'
 TARGET_GROUP_ID = -1003991874844  # @trifferi_katalog
@@ -89,12 +92,38 @@ class AILogger:
             logger.critical("Достигнут лимит ошибок. Завершение работы.")
             sys.exit(1)
 
-# ===== СОЗДАНИЕ ТЕМ (через бота) =====
+# ===== ЗАГРУЗКА СЕССИИ =====
+async def load_session():
+    """Загружает сессию из .b64 файла"""
+    if not os.path.exists(SESSION_B64_FILE):
+        logger.error("❌ Нет сессии!")
+        return False
+
+    if os.path.exists(SESSION_FILE):
+        os.remove(SESSION_FILE)
+
+    try:
+        with open(SESSION_B64_FILE, 'r') as f:
+            b64_data = f.read().strip()
+        decoded = base64.b64decode(b64_data)
+        with open(SESSION_FILE, 'wb') as f:
+            f.write(decoded)
+        os.chmod(SESSION_FILE, 0o600)
+        return True
+    except Exception as e:
+        logger.error(f"❌ Ошибка загрузки сессии: {e}")
+        return False
+
+# ===== СОЗДАНИЕ ТЕМ (через сессию) =====
 async def create_all_topics():
-    logger.info("🚀 Запуск менеджера тем через бота...")
-    client = TelegramClient('topic_bot_session', API_ID, API_HASH)
-    await client.start(bot_token=BOT_TOKEN)
+    logger.info("🚀 Запуск менеджера тем через сессию...")
     
+    if not await load_session():
+        return
+
+    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+    await client.connect()
+
     try:
         group = await client.get_entity(TARGET_GROUP_ID)
         dialogs = await client.get_dialogs()
@@ -115,7 +144,7 @@ async def create_all_topics():
                 random_id = random.randint(0, 2**63 - 1)
                 await client(SendMessageRequest(
                     peer=group,
-                    message=f"📌 **{topic_name}**\n\n(Тема создана ботом)",
+                    message=f"📌 **{topic_name}**\n\n(Тема создана автоматически)",
                     reply_to_msg_id=0,
                     random_id=random_id
                 ))
@@ -130,10 +159,13 @@ async def create_all_topics():
     finally:
         await client.disconnect()
 
-# ===== ОСНОВНОЙ БОТ (через бота) =====
+# ===== ПОЛУЧЕНИЕ ТЕМ (через сессию) =====
 async def get_topic_ids():
-    client = TelegramClient('main_bot_session', API_ID, API_HASH)
-    await client.start(bot_token=BOT_TOKEN)
+    if not await load_session():
+        return {}
+
+    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+    await client.connect()
     try:
         dialogs = await client.get_dialogs()
         topics = {}
@@ -150,10 +182,15 @@ async def get_topic_ids():
         await client.disconnect()
         return {}
 
+# ===== ОСНОВНОЙ БОТ (через сессию) =====
 async def process_albums(limit=100):
     logger.info(f"🚀 Запуск основного бота, обработка {limit} сообщений")
-    client = TelegramClient('main_bot_session', API_ID, API_HASH)
-    await client.start(bot_token=BOT_TOKEN)
+
+    if not await load_session():
+        return False
+
+    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+    await client.connect()
 
     try:
         channel = await client.get_entity(SOURCE_CHANNEL)
@@ -195,7 +232,7 @@ async def process_albums(limit=100):
             photo_paths = set()
             for m in group:
                 try:
-                    p = await client.download_media(m)
+                    p = await client.download_media(m, file=f"temp_{m.id}.jpg")
                     if p:
                         photo_paths.add(p)
                 except:
@@ -220,8 +257,8 @@ async def process_albums(limit=100):
 
         for attempt in range(3):
             try:
-                client = TelegramClient('main_bot_session', API_ID, API_HASH)
-                await client.start(bot_token=BOT_TOKEN)
+                client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+                await client.connect()
                 group = await client.get_entity(TARGET_GROUP_ID)
                 thread_id = topic_ids.get(topic) if topic_ids else None
 
