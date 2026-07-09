@@ -9,7 +9,6 @@ from flask import Flask, jsonify
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import GetHistoryRequest
-from telethon.tl.functions.channels import CreateForumTopicRequest
 
 # ===== НАСТРОЙКИ =====
 API_ID = 17349
@@ -82,11 +81,11 @@ async def log_step(client, step_name, details, success=True):
     emoji = "✅" if success else "❌"
     await send_report(client, f"{emoji} **{step_name}**\n{details}")
 
-# ===== СОЗДАНИЕ ТЕМ (от твоего имени) =====
+# ===== СОЗДАНИЕ ТЕМ (через send_message, без CreateForumTopicRequest) =====
 async def create_all_topics(client, group):
     logger.info("🚀 Создаю темы от имени @nurikadambol...")
     
-    # Получаем существующие темы
+    # Получаем существующие темы через диалоги
     dialogs = await client.get_dialogs()
     existing_topics = set()
     for dialog in dialogs:
@@ -102,10 +101,12 @@ async def create_all_topics(client, group):
             logger.info(f"ℹ️ Тема '{topic_name}' уже есть")
             continue
         try:
-            await client(CreateForumTopicRequest(
-                channel=group,
-                title=topic_name
-            ))
+            # В Telethon 1.44.0 send_message с reply_to=1 создаёт тему
+            await client.send_message(
+                entity=group,
+                message=f"📌 {topic_name}",
+                reply_to=1
+            )
             logger.info(f"✅ Создана тема: {topic_name}")
             created += 1
             await asyncio.sleep(0.5)
