@@ -105,18 +105,16 @@ def load_string_session():
         logger.error(f"❌ Ошибка загрузки сессии: {e}")
         return None
 
-# ===== ПОЛУЧЕНИЕ ТЕМ (каждый раз заново) =====
+# ===== ПОЛУЧЕНИЕ ТЕМ (через get_entity) =====
 async def get_topic_ids(client):
     try:
-        dialogs = await client.get_dialogs()
-        topics = {}
-        for dialog in dialogs:
-            if dialog.entity.id == TARGET_GROUP_ID:
-                if hasattr(dialog, 'forum_topics') and dialog.forum_topics:
-                    for topic in dialog.forum_topics:
-                        topics[topic.title] = topic.id
-                    break
-        return topics
+        group = await client.get_entity(TARGET_GROUP_ID)
+        if hasattr(group, 'forum_topics') and group.forum_topics:
+            topics = {}
+            for topic in group.forum_topics:
+                topics[topic.title] = topic.id
+            return topics
+        return {}
     except Exception as e:
         logger.error(f"❌ Ошибка получения тем: {e}")
         return {}
@@ -198,8 +196,7 @@ async def process_albums(limit=100):
             try:
                 client = TelegramClient(session, API_ID, API_HASH)
                 await client.connect()
-                group = await client.get_entity(TARGET_GROUP_ID)
-
+                
                 # === ПОЛУЧАЕМ ТЕМЫ ПЕРЕД КАЖДОЙ ОТПРАВКОЙ ===
                 topic_ids = await get_topic_ids(client)
                 thread_id = topic_ids.get(topic) if topic_ids else None
@@ -210,7 +207,7 @@ async def process_albums(limit=100):
 
                 caption = f"📌 **{topic}**\n\n{text}" if text else None
                 await client.send_file(
-                    entity=group,
+                    entity=await client.get_entity(TARGET_GROUP_ID),
                     file=photos,
                     caption=caption,
                     parse_mode="markdown",
