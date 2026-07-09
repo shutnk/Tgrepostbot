@@ -17,13 +17,13 @@ SESSION_B64_FILE = 'session.b64'
 SOURCE_CHANNEL = '@blvckrooom'
 TARGET_GROUP_ID = -1003991874844  # @trifferi_katalog
 MENTION_REPLACE = '@esen_baevich'
-ADMIN_ID = 5468112563  # твой ID для отчётов
+ADMIN_ID = 5468112563
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
 
-# ===== СПИСОК ВСЕХ ТЕМ (из твоих скриншотов) =====
+# ===== СПИСОК ТЕМ ДЛЯ СОЗДАНИЯ =====
 ALL_TOPICS = [
     "Arcteryx", "GIVENCHY", "Классическая мужская одежда", "MAISON MARGIELA",
     "WELLDONE", "AMIRI", "Женская обувь II", "Сумки Roger Vivier",
@@ -70,53 +70,39 @@ def load_session():
         logger.error(f"❌ Ошибка загрузки сессии: {e}")
         return None
 
-# ===== ЛОГГЕР =====
-async def send_report(client, message, level="INFO"):
+# ===== ПОЛУЧЕНИЕ ID ТЕМ (через диалоги) =====
+async def get_topic_ids(client, group):
     try:
-        await client.send_message(ADMIN_ID, f"🤖 **{level}**\n{message}")
-    except:
-        pass
+        dialogs = await client.get_dialogs()
+        topics = {}
+        for dialog in dialogs:
+            if dialog.entity.id == TARGET_GROUP_ID and hasattr(dialog, 'forum_topics'):
+                if dialog.forum_topics:
+                    for topic in dialog.forum_topics:
+                        topics[topic.title] = topic.id
+                    break
+        return topics
+    except Exception as e:
+        logger.error(f"❌ Ошибка получения тем: {e}")
+        return {}
 
-async def log_step(client, step_name, details, success=True):
-    emoji = "✅" if success else "❌"
-    await send_report(client, f"{emoji} **{step_name}**\n{details}")
+# ===== СОЗДАНИЕ ТЕМЫ (через reply_to=1) =====
+async def create_topic(client, group, topic_name):
+    try:
+        # Отправляем сообщение с reply_to=1 — Telegram создаст тему
+        await client.send_message(
+            entity=group,
+            message=f"📌 {topic_name}",
+            reply_to=1
+        )
+        logger.info(f"✅ Создана тема: {topic_name}")
+        await asyncio.sleep(1)
+        return True
+    except Exception as e:
+        logger.error(f"❌ Ошибка создания темы {topic_name}: {e}")
+        return False
 
-# ===== СОЗДАНИЕ ТЕМ (через send_message, без CreateForumTopicRequest) =====
-async def create_all_topics(client, group):
-    logger.info("🚀 Создаю темы от имени @nurikadambol...")
-    
-    # Получаем существующие темы через диалоги
-    dialogs = await client.get_dialogs()
-    existing_topics = set()
-    for dialog in dialogs:
-        if dialog.entity.id == TARGET_GROUP_ID and hasattr(dialog, 'forum_topics'):
-            if dialog.forum_topics:
-                for topic in dialog.forum_topics:
-                    existing_topics.add(topic.title)
-                break
-
-    created = 0
-    for topic_name in ALL_TOPICS:
-        if topic_name in existing_topics:
-            logger.info(f"ℹ️ Тема '{topic_name}' уже есть")
-            continue
-        try:
-            # В Telethon 1.44.0 send_message с reply_to=1 создаёт тему
-            await client.send_message(
-                entity=group,
-                message=f"📌 {topic_name}",
-                reply_to=1
-            )
-            logger.info(f"✅ Создана тема: {topic_name}")
-            created += 1
-            await asyncio.sleep(0.5)
-        except Exception as e:
-            logger.error(f"❌ Ошибка создания '{topic_name}': {e}")
-
-    logger.info(f"🎉 Создано {created} новых тем.")
-    await send_report(client, f"🎉 Создано {created} новых тем.")
-
-# ===== ОСНОВНОЙ БОТ (репост от твоего имени) =====
+# ===== ОСНОВНОЙ БОТ =====
 async def process_albums(limit=100):
     logger.info("🚀 Запуск от имени @nurikadambol...")
 
@@ -126,7 +112,6 @@ async def process_albums(limit=100):
 
     client = TelegramClient(session, API_ID, API_HASH)
     await client.connect()
-    await send_report(client, "✅ Бот запущен от имени @nurikadambol")
 
     try:
         channel = await client.get_entity(SOURCE_CHANNEL)
@@ -136,7 +121,6 @@ async def process_albums(limit=100):
         await client.disconnect()
         return False
 
-    # Получаем историю
     history = await client(GetHistoryRequest(
         peer=channel,
         offset_id=0,
@@ -179,21 +163,20 @@ async def process_albums(limit=100):
         i = j
 
     logger.info(f"📚 Найдено {len(albums)} альбомов")
-    await send_report(client, f"📚 Найдено {len(albums)} альбомов")
 
-    # Создаём темы перед отправкой
     group = await client.get_entity(TARGET_GROUP_ID)
-    await create_all_topics(client, group)
 
-    # Получаем ID тем
-    dialogs = await client.get_dialogs()
-    topic_ids = {}
-    for dialog in dialogs:
-        if dialog.entity.id == TARGET_GROUP_ID and hasattr(dialog, 'forum_topics'):
-            if dialog.forum_topics:
-                for topic in dialog.forum_topics:
-                    topic_ids[topic.title] = topic.id
-            break
+    # Получаем существующие темы
+    topic_ids = await get_topic_ids(client, group)
+
+    # Создаём недостающие темы
+    for topic_name in ALL_TOPICS:
+        if topic_name not in topic_ids:
+            logger.info(f"🛠️ Создаю тему: {topic_name}")
+            await create_topic(client, group, topic_name)
+
+    # Обновляем список тем после создания
+    topic_ids = await get_topic_ids(client, group)
 
     total_sent = 0
     for idx, album in enumerate(albums):
@@ -201,6 +184,10 @@ async def process_albums(limit=100):
         topic = detect_topic(text)
         photos = album["photo_paths"]
         thread_id = topic_ids.get(topic)
+
+        if not thread_id:
+            logger.warning(f"⚠️ Тема '{topic}' не создалась. Отправляю в General.")
+            thread_id = None
 
         for attempt in range(3):
             try:
@@ -219,8 +206,8 @@ async def process_albums(limit=100):
                 logger.error(f"❌ Попытка {attempt+1}: {e}")
                 await asyncio.sleep(2)
 
-    await send_report(client, f"🎉 Отправлено {total_sent} альбомов.")
     await client.disconnect()
+    logger.info(f"🎉 Отправлено {total_sent} альбомов.")
     return True
 
 # ===== ОПРЕДЕЛЕНИЕ ТЕМЫ =====
