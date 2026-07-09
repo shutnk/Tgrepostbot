@@ -92,7 +92,6 @@ class AILogger:
 
 # ===== ЗАГРУЗКА StringSession =====
 def load_string_session():
-    """Загружает сессию из session.b64 как StringSession"""
     if not os.path.exists(SESSION_B64_FILE):
         logger.error("❌ Нет сессии!")
         return None
@@ -106,14 +105,8 @@ def load_string_session():
         logger.error(f"❌ Ошибка загрузки сессии: {e}")
         return None
 
-# ===== ПОЛУЧЕНИЕ ТЕМ =====
-async def get_topic_ids():
-    session = load_string_session()
-    if not session:
-        return {}
-
-    client = TelegramClient(session, API_ID, API_HASH)
-    await client.connect()
+# ===== ПОЛУЧЕНИЕ ТЕМ (каждый раз заново) =====
+async def get_topic_ids(client):
     try:
         dialogs = await client.get_dialogs()
         topics = {}
@@ -123,11 +116,9 @@ async def get_topic_ids():
                     for topic in dialog.forum_topics:
                         topics[topic.title] = topic.id
                     break
-        await client.disconnect()
         return topics
     except Exception as e:
         logger.error(f"❌ Ошибка получения тем: {e}")
-        await client.disconnect()
         return {}
 
 # ===== ОСНОВНОЙ БОТ =====
@@ -209,7 +200,8 @@ async def process_albums(limit=100):
                 await client.connect()
                 group = await client.get_entity(TARGET_GROUP_ID)
 
-                topic_ids = await get_topic_ids()
+                # === ПОЛУЧАЕМ ТЕМЫ ПЕРЕД КАЖДОЙ ОТПРАВКОЙ ===
+                topic_ids = await get_topic_ids(client)
                 thread_id = topic_ids.get(topic) if topic_ids else None
 
                 if not thread_id:
