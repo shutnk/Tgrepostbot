@@ -2,7 +2,6 @@ import os
 import re
 import asyncio
 import logging
-import base64
 import json
 import traceback
 import sys
@@ -14,20 +13,17 @@ from telethon.tl.functions.messages import GetHistoryRequest, SendMessageRequest
 # ===== НАСТРОЙКИ =====
 API_ID = 17349
 API_HASH = '344583e45741c457fe1862106095a5eb'
-SESSION_FILE = 'session.session'
-SESSION_B64_FILE = 'session.b64'
+BOT_TOKEN = '8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4'
 SOURCE_CHANNEL = '@blvckrooom'
 TARGET_GROUP_ID = -1003991874844  # @trifferi_katalog
 MENTION_REPLACE = '@esen_baevich'
-
 ADMIN_ID = 5468112563
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
-
 app = Flask(__name__)
 
-# ===== СПИСОК ТЕМ =====
+# ===== СПИСОК ВСЕХ ТЕМ (ПО ТВОИМ СКРИНШОТАМ) =====
 ALL_TOPICS = [
     "Arcteryx", "GIVENCHY", "Классическая мужская одежда", "MAISON MARGIELA",
     "WELLDONE", "AMIRI", "Женская обувь II", "Сумки Roger Vivier",
@@ -93,36 +89,16 @@ class AILogger:
             logger.critical("Достигнут лимит ошибок. Завершение работы.")
             sys.exit(1)
 
-# ===== СОЗДАНИЕ ВСЕХ ТЕМ =====
+# ===== СОЗДАНИЕ ТЕМ (через бота) =====
 async def create_all_topics():
-    logger.info("🚀 Запуск менеджера тем: создаю темы из списка...")
+    logger.info("🚀 Запуск менеджера тем через бота...")
+    client = TelegramClient('topic_bot_session', API_ID, API_HASH)
+    await client.start(bot_token=BOT_TOKEN)
     
-    if not os.path.exists(SESSION_B64_FILE):
-        logger.error("❌ Нет сессии!")
-        return
-
-    if os.path.exists(SESSION_FILE):
-        os.remove(SESSION_FILE)
-
-    try:
-        with open(SESSION_B64_FILE, 'r') as f:
-            b64_data = f.read().strip()
-        decoded = base64.b64decode(b64_data)
-        with open(SESSION_FILE, 'wb') as f:
-            f.write(decoded)
-        os.chmod(SESSION_FILE, 0o600)
-    except Exception as e:
-        logger.error(f"❌ Ошибка загрузки сессии: {e}")
-        return
-
-    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
-    await client.connect()
-
     try:
         group = await client.get_entity(TARGET_GROUP_ID)
-        
-        existing_topics = set()
         dialogs = await client.get_dialogs()
+        existing_topics = set()
         for dialog in dialogs:
             if dialog.entity.id == TARGET_GROUP_ID and hasattr(dialog, 'forum_topics'):
                 if dialog.forum_topics:
@@ -133,57 +109,31 @@ async def create_all_topics():
         created_count = 0
         for topic_name in ALL_TOPICS:
             if topic_name in existing_topics:
-                logger.info(f"ℹ️ Тема '{topic_name}' уже существует, пропускаю")
+                logger.info(f"ℹ️ Тема '{topic_name}' уже существует")
                 continue
-            
             try:
                 random_id = random.randint(0, 2**63 - 1)
                 await client(SendMessageRequest(
                     peer=group,
-                    message=f"📌 **{topic_name}**\n\n(Тема создана автоматически)",
+                    message=f"📌 **{topic_name}**\n\n(Тема создана ботом)",
                     reply_to_msg_id=0,
                     random_id=random_id
                 ))
                 logger.info(f"✅ Создана тема: {topic_name}")
                 created_count += 1
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.5)
             except Exception as e:
-                logger.error(f"❌ Ошибка создания темы '{topic_name}': {e}")
-
-        logger.info(f"🎉 Менеджер тем завершил работу. Создано {created_count} новых тем.")
-        
+                logger.error(f"❌ Ошибка создания '{topic_name}': {e}")
+        logger.info(f"🎉 Создано {created_count} новых тем.")
     except Exception as e:
-        logger.error(f"❌ Ошибка в менеджере тем: {e}")
+        logger.error(f"❌ Ошибка менеджера: {e}")
     finally:
         await client.disconnect()
-        if os.path.exists(SESSION_FILE):
-            os.remove(SESSION_FILE)
 
-# ===== ОСНОВНОЙ БОТ (РЕПОСТЫ) =====
-async def get_topic_ids(ai_logger):
-    if not os.path.exists(SESSION_B64_FILE):
-        await ai_logger.log_step("Проверка сессии", "Сессия не найдена!", False)
-        return {}
-
-    if os.path.exists(SESSION_FILE):
-        os.remove(SESSION_FILE)
-
-    try:
-        with open(SESSION_B64_FILE, 'r') as f:
-            b64_data = f.read().strip()
-        decoded = base64.b64decode(b64_data)
-        with open(SESSION_FILE, 'wb') as f:
-            f.write(decoded)
-        os.chmod(SESSION_FILE, 0o600)
-    except Exception as e:
-        await ai_logger.log_error(e, "Декодирование сессии", "Проверь корректность session.b64")
-        return {}
-
-    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
-    await client.connect()
-    ai_logger.client = client
-    await ai_logger.log_step("Подключение к аккаунту", "Успешно", True)
-
+# ===== ОСНОВНОЙ БОТ (через бота) =====
+async def get_topic_ids():
+    client = TelegramClient('main_bot_session', API_ID, API_HASH)
+    await client.start(bot_token=BOT_TOKEN)
     try:
         dialogs = await client.get_dialogs()
         topics = {}
@@ -193,56 +143,26 @@ async def get_topic_ids(ai_logger):
                     for topic in dialog.forum_topics:
                         topics[topic.title] = topic.id
                     break
-        await ai_logger.log_step("Загрузка тем", f"Найдено {len(topics)} тем", True)
         await client.disconnect()
-        if os.path.exists(SESSION_FILE):
-            os.remove(SESSION_FILE)
         return topics
     except Exception as e:
-        await ai_logger.log_error(e, "Получение тем", "Проверь права доступа к группе")
+        logger.error(f"❌ Ошибка получения тем: {e}")
         await client.disconnect()
-        if os.path.exists(SESSION_FILE):
-            os.remove(SESSION_FILE)
         return {}
 
 async def process_albums(limit=100):
-    ai_logger = AILogger(None)
-    await ai_logger.log_step("Запуск основного бота", f"Начинаю обработку {limit} сообщений", True)
-
-    if not os.path.exists(SESSION_B64_FILE):
-        await ai_logger.log_step("Сессия", "Файл сессии отсутствует", False)
-        return False
-
-    if os.path.exists(SESSION_FILE):
-        os.remove(SESSION_FILE)
-
-    try:
-        with open(SESSION_B64_FILE, 'r') as f:
-            b64_data = f.read().strip()
-        decoded = base64.b64decode(b64_data)
-        with open(SESSION_FILE, 'wb') as f:
-            f.write(decoded)
-        os.chmod(SESSION_FILE, 0o600)
-    except Exception as e:
-        await ai_logger.log_error(e, "Загрузка сессии", "Проверь права на файлы")
-        return False
-
-    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
-    await client.connect()
-    ai_logger.client = client
-    await ai_logger.log_step("Подключение к аккаунту", "Успешно", True)
+    logger.info(f"🚀 Запуск основного бота, обработка {limit} сообщений")
+    client = TelegramClient('main_bot_session', API_ID, API_HASH)
+    await client.start(bot_token=BOT_TOKEN)
 
     try:
         channel = await client.get_entity(SOURCE_CHANNEL)
-        await ai_logger.log_step("Подключение к каналу", f"Канал {SOURCE_CHANNEL} найден", True)
+        logger.info(f"✅ Канал {SOURCE_CHANNEL} найден")
     except Exception as e:
-        await ai_logger.log_error(e, "Получение канала", "Проверь правильность SOURCE_CHANNEL")
+        logger.error(f"❌ Ошибка получения канала: {e}")
         await client.disconnect()
-        if os.path.exists(SESSION_FILE):
-            os.remove(SESSION_FILE)
         return False
 
-    albums = []
     history = await client(GetHistoryRequest(
         peer=channel,
         offset_id=0,
@@ -254,8 +174,7 @@ async def process_albums(limit=100):
         limit=limit
     ))
 
-    await ai_logger.log_step("Получение истории", f"Получено {len(history.messages)} сообщений", True)
-
+    albums = []
     i = 0
     while i < len(history.messages):
         msg = history.messages[i]
@@ -276,7 +195,7 @@ async def process_albums(limit=100):
             photo_paths = set()
             for m in group:
                 try:
-                    p = await client.download_media(m, file=f"temp_{m.id}.jpg")
+                    p = await client.download_media(m)
                     if p:
                         photo_paths.add(p)
                 except:
@@ -285,37 +204,29 @@ async def process_albums(limit=100):
                 albums.append({"text": text, "photo_paths": list(photo_paths)})
         i = j
 
-    await ai_logger.log_step("Обработка альбомов", f"Найдено {len(albums)} альбомов", True)
+    logger.info(f"📚 Найдено {len(albums)} альбомов")
     await client.disconnect()
-    if os.path.exists(SESSION_FILE):
-        os.remove(SESSION_FILE)
 
     if not albums:
-        await ai_logger.log_step("Результат", "Альбомы не найдены", False)
+        logger.info("Альбомы не найдены")
         return True
 
+    topic_ids = await get_topic_ids()
     total_sent = 0
     for idx, album in enumerate(albums):
         text = replace_mentions(album["text"])
         topic = detect_topic(text)
         photos = album["photo_paths"]
 
-        success = False
         for attempt in range(3):
             try:
-                client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
-                await client.connect()
-                ai_logger.client = client
+                client = TelegramClient('main_bot_session', API_ID, API_HASH)
+                await client.start(bot_token=BOT_TOKEN)
                 group = await client.get_entity(TARGET_GROUP_ID)
-
-                topic_ids = await get_topic_ids(ai_logger)
                 thread_id = topic_ids.get(topic) if topic_ids else None
 
                 if not thread_id:
-                    await ai_logger.send_report(
-                        f"⚠️ Новая тема: '{topic}'\nАльбом отправлен в **General**.\nСоздай тему вручную.",
-                        "WARNING"
-                    )
+                    logger.warning(f"⚠️ Тема '{topic}' не найдена. Отправляю в General.")
                     thread_id = None
 
                 caption = f"📌 **{topic}**\n\n{text}" if text else None
@@ -326,31 +237,16 @@ async def process_albums(limit=100):
                     parse_mode="markdown",
                     message_thread_id=thread_id
                 )
-
-                await ai_logger.log_step(
-                    f"Отправка альбома #{idx+1}",
-                    f"{len(photos)} фото в '{topic if thread_id else 'General'}'",
-                    True
-                )
+                logger.info(f"✅ Отправлен альбом #{idx+1} в {topic if thread_id else 'General'}")
                 total_sent += 1
-                success = True
                 await client.disconnect()
-                if os.path.exists(SESSION_FILE):
-                    os.remove(SESSION_FILE)
                 break
-
             except Exception as e:
-                await ai_logger.log_error(e, f"Попытка #{attempt+1} отправки", f"Ошибка: {e}")
+                logger.error(f"❌ Попытка {attempt+1} ошибка: {e}")
                 await client.disconnect()
-                if os.path.exists(SESSION_FILE):
-                    os.remove(SESSION_FILE)
                 await asyncio.sleep(2)
 
-        if not success:
-            await ai_logger.send_report(f"🚫 Альбом #{idx+1} не отправлен. Пропускаю.", "WARNING")
-
-    await ai_logger.log_step("Завершение", f"Обработано {total_sent} альбомов", True)
-    await ai_logger.send_report(f"🎉 Основной бот завершил работу! Отправлено {total_sent} альбомов.")
+    logger.info(f"🎉 Готово! Отправлено {total_sent} альбомов.")
     return True
 
 # ===== ОПРЕДЕЛЕНИЕ ТЕМЫ =====
@@ -484,6 +380,5 @@ def health():
 if __name__ == "__main__":
     asyncio.run(create_all_topics())
     asyncio.run(process_albums(limit=100))
-    
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
