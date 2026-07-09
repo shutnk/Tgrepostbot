@@ -4,12 +4,12 @@ import asyncio
 import logging
 import base64
 import json
-import traceback
-import sys
+import random
 from flask import Flask, jsonify
 from telethon import TelegramClient
-from telethon.tl.functions.messages import GetHistoryRequest
 from telethon.sessions import StringSession
+from telethon.tl.functions.messages import GetHistoryRequest
+from telethon.tl.functions.channels import CreateForumTopicRequest
 
 # ===== НАСТРОЙКИ =====
 API_ID = 17349
@@ -18,13 +18,13 @@ SESSION_B64_FILE = 'session.b64'
 SOURCE_CHANNEL = '@blvckrooom'
 TARGET_GROUP_ID = -1003991874844  # @trifferi_katalog
 MENTION_REPLACE = '@esen_baevich'
-ADMIN_ID = 5468112563
+ADMIN_ID = 5468112563  # твой ID для отчётов
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
 
-# ===== СПИСОК ВСЕХ ТЕМ =====
+# ===== СПИСОК ВСЕХ ТЕМ (из твоих скриншотов) =====
 ALL_TOPICS = [
     "Arcteryx", "GIVENCHY", "Классическая мужская одежда", "MAISON MARGIELA",
     "WELLDONE", "AMIRI", "Женская обувь II", "Сумки Roger Vivier",
@@ -56,42 +56,8 @@ ALL_TOPICS = [
     "Одежда Loro/Brunello/Kiton/Zegna"
 ]
 
-# ===== ЛОГГЕР =====
-class AILogger:
-    def __init__(self, client=None):
-        self.client = client
-        self.error_count = 0
-        self.max_errors = 3
-
-    async def send_report(self, message, level="INFO"):
-        if not self.client:
-            return
-        try:
-            await self.client.send_message(ADMIN_ID, f"🤖 **{level}**\n{message}")
-        except:
-            pass
-
-    async def log_step(self, step_name, details, success=True):
-        emoji = "✅" if success else "❌"
-        msg = f"{emoji} **{step_name}**\n{details}"
-        logger.info(msg)
-        await self.send_report(msg, "STEP")
-
-    async def log_error(self, error, context="", solution_hint=""):
-        self.error_count += 1
-        msg = f"❌ **ОШИБКА #{self.error_count}**\nКонтекст: {context}\nОшибка: {error}\n"
-        if solution_hint:
-            msg += f"💡 **Предлагаю:** {solution_hint}"
-        logger.error(msg)
-        await self.send_report(msg, "ERROR")
-
-        if self.error_count >= self.max_errors:
-            await self.send_report("🚨 **Достигнут лимит ошибок. Бот завершает работу.**", "CRITICAL")
-            logger.critical("Достигнут лимит ошибок. Завершение работы.")
-            sys.exit(1)
-
-# ===== ЗАГРУЗКА StringSession =====
-def load_string_session():
+# ===== ЗАГРУЗКА СЕССИИ =====
+def load_session():
     if not os.path.exists(SESSION_B64_FILE):
         logger.error("❌ Нет сессии!")
         return None
@@ -105,39 +71,71 @@ def load_string_session():
         logger.error(f"❌ Ошибка загрузки сессии: {e}")
         return None
 
-# ===== ПОЛУЧЕНИЕ ТЕМ (через get_entity) =====
-async def get_topic_ids(client):
+# ===== ЛОГГЕР =====
+async def send_report(client, message, level="INFO"):
     try:
-        group = await client.get_entity(TARGET_GROUP_ID)
-        if hasattr(group, 'forum_topics') and group.forum_topics:
-            topics = {}
-            for topic in group.forum_topics:
-                topics[topic.title] = topic.id
-            return topics
-        return {}
-    except Exception as e:
-        logger.error(f"❌ Ошибка получения тем: {e}")
-        return {}
+        await client.send_message(ADMIN_ID, f"🤖 **{level}**\n{message}")
+    except:
+        pass
 
-# ===== ОСНОВНОЙ БОТ =====
+async def log_step(client, step_name, details, success=True):
+    emoji = "✅" if success else "❌"
+    await send_report(client, f"{emoji} **{step_name}**\n{details}")
+
+# ===== СОЗДАНИЕ ТЕМ (от твоего имени) =====
+async def create_all_topics(client, group):
+    logger.info("🚀 Создаю темы от имени @nurikadambol...")
+    
+    # Получаем существующие темы
+    dialogs = await client.get_dialogs()
+    existing_topics = set()
+    for dialog in dialogs:
+        if dialog.entity.id == TARGET_GROUP_ID and hasattr(dialog, 'forum_topics'):
+            if dialog.forum_topics:
+                for topic in dialog.forum_topics:
+                    existing_topics.add(topic.title)
+                break
+
+    created = 0
+    for topic_name in ALL_TOPICS:
+        if topic_name in existing_topics:
+            logger.info(f"ℹ️ Тема '{topic_name}' уже есть")
+            continue
+        try:
+            await client(CreateForumTopicRequest(
+                channel=group,
+                title=topic_name
+            ))
+            logger.info(f"✅ Создана тема: {topic_name}")
+            created += 1
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            logger.error(f"❌ Ошибка создания '{topic_name}': {e}")
+
+    logger.info(f"🎉 Создано {created} новых тем.")
+    await send_report(client, f"🎉 Создано {created} новых тем.")
+
+# ===== ОСНОВНОЙ БОТ (репост от твоего имени) =====
 async def process_albums(limit=100):
-    logger.info(f"🚀 Запуск основного бота, обработка {limit} сообщений")
+    logger.info("🚀 Запуск от имени @nurikadambol...")
 
-    session = load_string_session()
+    session = load_session()
     if not session:
         return False
 
     client = TelegramClient(session, API_ID, API_HASH)
     await client.connect()
+    await send_report(client, "✅ Бот запущен от имени @nurikadambol")
 
     try:
         channel = await client.get_entity(SOURCE_CHANNEL)
         logger.info(f"✅ Канал {SOURCE_CHANNEL} найден")
     except Exception as e:
-        logger.error(f"❌ Ошибка получения канала: {e}")
+        logger.error(f"❌ Ошибка канала: {e}")
         await client.disconnect()
         return False
 
+    # Получаем историю
     history = await client(GetHistoryRequest(
         peer=channel,
         offset_id=0,
@@ -180,49 +178,48 @@ async def process_albums(limit=100):
         i = j
 
     logger.info(f"📚 Найдено {len(albums)} альбомов")
-    await client.disconnect()
+    await send_report(client, f"📚 Найдено {len(albums)} альбомов")
 
-    if not albums:
-        logger.info("Альбомы не найдены")
-        return True
+    # Создаём темы перед отправкой
+    group = await client.get_entity(TARGET_GROUP_ID)
+    await create_all_topics(client, group)
+
+    # Получаем ID тем
+    dialogs = await client.get_dialogs()
+    topic_ids = {}
+    for dialog in dialogs:
+        if dialog.entity.id == TARGET_GROUP_ID and hasattr(dialog, 'forum_topics'):
+            if dialog.forum_topics:
+                for topic in dialog.forum_topics:
+                    topic_ids[topic.title] = topic.id
+            break
 
     total_sent = 0
     for idx, album in enumerate(albums):
         text = replace_mentions(album["text"])
         topic = detect_topic(text)
         photos = album["photo_paths"]
+        thread_id = topic_ids.get(topic)
 
         for attempt in range(3):
             try:
-                client = TelegramClient(session, API_ID, API_HASH)
-                await client.connect()
-                
-                # === ПОЛУЧАЕМ ТЕМЫ ПЕРЕД КАЖДОЙ ОТПРАВКОЙ ===
-                topic_ids = await get_topic_ids(client)
-                thread_id = topic_ids.get(topic) if topic_ids else None
-
-                if not thread_id:
-                    logger.warning(f"⚠️ Тема '{topic}' не найдена. Отправляю в General.")
-                    thread_id = None
-
                 caption = f"📌 **{topic}**\n\n{text}" if text else None
                 await client.send_file(
-                    entity=await client.get_entity(TARGET_GROUP_ID),
+                    entity=group,
                     file=photos,
                     caption=caption,
                     parse_mode="markdown",
                     message_thread_id=thread_id
                 )
-                logger.info(f"✅ Отправлен альбом #{idx+1} в {topic if thread_id else 'General'}")
+                logger.info(f"✅ Отправлен альбом #{idx+1} в {topic}")
                 total_sent += 1
-                await client.disconnect()
                 break
             except Exception as e:
-                logger.error(f"❌ Попытка {attempt+1} ошибка: {e}")
-                await client.disconnect()
+                logger.error(f"❌ Попытка {attempt+1}: {e}")
                 await asyncio.sleep(2)
 
-    logger.info(f"🎉 Готово! Отправлено {total_sent} альбомов.")
+    await send_report(client, f"🎉 Отправлено {total_sent} альбомов.")
+    await client.disconnect()
     return True
 
 # ===== ОПРЕДЕЛЕНИЕ ТЕМЫ =====
