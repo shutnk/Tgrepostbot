@@ -9,11 +9,11 @@ import sys
 from flask import Flask, jsonify
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
+from telethon.sessions import StringSession
 
 # ===== НАСТРОЙКИ =====
 API_ID = 17349
 API_HASH = '344583e45741c457fe1862106095a5eb'
-SESSION_FILE = 'session.session'
 SESSION_B64_FILE = 'session.b64'
 SOURCE_CHANNEL = '@blvckrooom'
 TARGET_GROUP_ID = -1003991874844  # @trifferi_katalog
@@ -90,33 +90,29 @@ class AILogger:
             logger.critical("Достигнут лимит ошибок. Завершение работы.")
             sys.exit(1)
 
-# ===== ЗАГРУЗКА СЕССИИ =====
-async def load_session():
+# ===== ЗАГРУЗКА StringSession =====
+def load_string_session():
+    """Загружает сессию из session.b64 как StringSession"""
     if not os.path.exists(SESSION_B64_FILE):
         logger.error("❌ Нет сессии!")
-        return False
-
-    if os.path.exists(SESSION_FILE):
-        os.remove(SESSION_FILE)
+        return None
 
     try:
         with open(SESSION_B64_FILE, 'r') as f:
             b64_data = f.read().strip()
-        decoded = base64.b64decode(b64_data)
-        with open(SESSION_FILE, 'wb') as f:
-            f.write(decoded)
-        os.chmod(SESSION_FILE, 0o600)
-        return True
+        decoded = base64.b64decode(b64_data).decode('utf-8')
+        return StringSession(decoded)
     except Exception as e:
         logger.error(f"❌ Ошибка загрузки сессии: {e}")
-        return False
+        return None
 
-# ===== ПОЛУЧЕНИЕ ТЕМ (заново каждый раз) =====
+# ===== ПОЛУЧЕНИЕ ТЕМ =====
 async def get_topic_ids():
-    if not await load_session():
+    session = load_string_session()
+    if not session:
         return {}
 
-    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+    client = TelegramClient(session, API_ID, API_HASH)
     await client.connect()
     try:
         dialogs = await client.get_dialogs()
@@ -138,10 +134,11 @@ async def get_topic_ids():
 async def process_albums(limit=100):
     logger.info(f"🚀 Запуск основного бота, обработка {limit} сообщений")
 
-    if not await load_session():
+    session = load_string_session()
+    if not session:
         return False
 
-    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+    client = TelegramClient(session, API_ID, API_HASH)
     await client.connect()
 
     try:
@@ -208,11 +205,10 @@ async def process_albums(limit=100):
 
         for attempt in range(3):
             try:
-                client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+                client = TelegramClient(session, API_ID, API_HASH)
                 await client.connect()
                 group = await client.get_entity(TARGET_GROUP_ID)
 
-                # === ЗАНОВО ПОЛУЧАЕМ СПИСОК ТЕМ ===
                 topic_ids = await get_topic_ids()
                 thread_id = topic_ids.get(topic) if topic_ids else None
 
