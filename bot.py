@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
 
-# ===== СПИСОК ТЕМ ДЛЯ СОЗДАНИЯ =====
+# ===== СПИСОК ВСЕХ ТЕМ (из твоих скриншотов) =====
 ALL_TOPICS = [
     "Arcteryx", "GIVENCHY", "Классическая мужская одежда", "MAISON MARGIELA",
     "WELLDONE", "AMIRI", "Женская обувь II", "Сумки Roger Vivier",
@@ -70,8 +70,31 @@ def load_session():
         logger.error(f"❌ Ошибка загрузки сессии: {e}")
         return None
 
-# ===== ПОЛУЧЕНИЕ ID ТЕМ (через диалоги) =====
-async def get_topic_ids(client, group):
+# ===== СОЗДАНИЕ ТЕМЫ (Секретный метод для 1.44.0) =====
+async def create_topic(client, group, topic_name):
+    try:
+        # Шаг 1: Отправляем сообщение с названием темы
+        msg = await client.send_message(group, f"📌 {topic_name}")
+        logger.info(f"✅ Шаг 1: Сообщение отправлено для темы {topic_name} (ID: {msg.id})")
+        
+        # Шаг 2: Отправляем второе сообщение в ответ на первое
+        # Telegram автоматически превратит это в тему
+        await client.send_message(
+            group,
+            f"🔥 Тема создана: {topic_name}",
+            reply_to=msg.id
+        )
+        logger.info(f"✅ Шаг 2: Тема {topic_name} создана!")
+        
+        # Ждём, чтобы Telegram успел создать тему
+        await asyncio.sleep(1)
+        return True
+    except Exception as e:
+        logger.error(f"❌ Ошибка создания темы {topic_name}: {e}")
+        return False
+
+# ===== ПОЛУЧЕНИЕ ID ТЕМ =====
+async def get_topic_ids(client):
     try:
         dialogs = await client.get_dialogs()
         topics = {}
@@ -85,22 +108,6 @@ async def get_topic_ids(client, group):
     except Exception as e:
         logger.error(f"❌ Ошибка получения тем: {e}")
         return {}
-
-# ===== СОЗДАНИЕ ТЕМЫ (через reply_to=1) =====
-async def create_topic(client, group, topic_name):
-    try:
-        # Отправляем сообщение с reply_to=1 — Telegram создаст тему
-        await client.send_message(
-            entity=group,
-            message=f"📌 {topic_name}",
-            reply_to=1
-        )
-        logger.info(f"✅ Создана тема: {topic_name}")
-        await asyncio.sleep(1)
-        return True
-    except Exception as e:
-        logger.error(f"❌ Ошибка создания темы {topic_name}: {e}")
-        return False
 
 # ===== ОСНОВНОЙ БОТ =====
 async def process_albums(limit=100):
@@ -165,18 +172,16 @@ async def process_albums(limit=100):
     logger.info(f"📚 Найдено {len(albums)} альбомов")
 
     group = await client.get_entity(TARGET_GROUP_ID)
-
-    # Получаем существующие темы
-    topic_ids = await get_topic_ids(client, group)
-
-    # Создаём недостающие темы
+    
+    # Сначала создаём все темы, которых ещё нет
+    existing_topics = await get_topic_ids(client)
     for topic_name in ALL_TOPICS:
-        if topic_name not in topic_ids:
+        if topic_name not in existing_topics:
             logger.info(f"🛠️ Создаю тему: {topic_name}")
             await create_topic(client, group, topic_name)
 
-    # Обновляем список тем после создания
-    topic_ids = await get_topic_ids(client, group)
+    # Обновляем список тем
+    topic_ids = await get_topic_ids(client)
 
     total_sent = 0
     for idx, album in enumerate(albums):
