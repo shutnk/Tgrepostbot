@@ -111,48 +111,7 @@ async def load_session():
         logger.error(f"❌ Ошибка загрузки сессии: {e}")
         return False
 
-# ===== СОЗДАНИЕ ТЕМ (через client.create_forum_topic) =====
-async def create_all_topics():
-    logger.info("🚀 Запуск менеджера тем...")
-    
-    if not await load_session():
-        return
-
-    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
-    await client.connect()
-
-    try:
-        group = await client.get_entity(TARGET_GROUP_ID)
-        
-        dialogs = await client.get_dialogs()
-        existing_topics = set()
-        for dialog in dialogs:
-            if dialog.entity.id == TARGET_GROUP_ID and hasattr(dialog, 'forum_topics'):
-                if dialog.forum_topics:
-                    for topic in dialog.forum_topics:
-                        existing_topics.add(topic.title)
-                    break
-
-        created_count = 0
-        for topic_name in ALL_TOPICS:
-            if topic_name in existing_topics:
-                logger.info(f"ℹ️ Тема '{topic_name}' уже существует")
-                continue
-            try:
-                # Используем встроенный метод create_forum_topic (работает в 1.44.0)
-                result = await client.create_forum_topic(group, topic_name)
-                logger.info(f"✅ Создана тема: {topic_name} (ID: {result.id})")
-                created_count += 1
-                await asyncio.sleep(0.5)
-            except Exception as e:
-                logger.error(f"❌ Ошибка создания '{topic_name}': {e}")
-        logger.info(f"🎉 Создано {created_count} новых тем.")
-    except Exception as e:
-        logger.error(f"❌ Ошибка менеджера: {e}")
-    finally:
-        await client.disconnect()
-
-# ===== ПОЛУЧЕНИЕ ТЕМ =====
+# ===== ПОЛУЧЕНИЕ ТЕМ (заново каждый раз) =====
 async def get_topic_ids():
     if not await load_session():
         return {}
@@ -163,8 +122,8 @@ async def get_topic_ids():
         dialogs = await client.get_dialogs()
         topics = {}
         for dialog in dialogs:
-            if dialog.entity.id == TARGET_GROUP_ID and hasattr(dialog, 'forum_topics'):
-                if dialog.forum_topics:
+            if dialog.entity.id == TARGET_GROUP_ID:
+                if hasattr(dialog, 'forum_topics') and dialog.forum_topics:
                     for topic in dialog.forum_topics:
                         topics[topic.title] = topic.id
                     break
@@ -241,7 +200,6 @@ async def process_albums(limit=100):
         logger.info("Альбомы не найдены")
         return True
 
-    topic_ids = await get_topic_ids()
     total_sent = 0
     for idx, album in enumerate(albums):
         text = replace_mentions(album["text"])
@@ -253,6 +211,9 @@ async def process_albums(limit=100):
                 client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
                 await client.connect()
                 group = await client.get_entity(TARGET_GROUP_ID)
+
+                # === ЗАНОВО ПОЛУЧАЕМ СПИСОК ТЕМ ===
+                topic_ids = await get_topic_ids()
                 thread_id = topic_ids.get(topic) if topic_ids else None
 
                 if not thread_id:
@@ -408,7 +369,6 @@ def health():
     return jsonify({"status": "ok"})
 
 if __name__ == "__main__":
-    asyncio.run(create_all_topics())
     asyncio.run(process_albums(limit=100))
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
