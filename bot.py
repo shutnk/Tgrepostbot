@@ -9,14 +9,13 @@ import sys
 import random
 from flask import Flask, jsonify
 from telethon import TelegramClient
-from telethon.tl.functions.messages import GetHistoryRequest, SendMessageRequest
+from telethon.tl.functions.messages import GetHistoryRequest
 
 # ===== НАСТРОЙКИ =====
 API_ID = 17349
 API_HASH = '344583e45741c457fe1862106095a5eb'
 SESSION_FILE = 'session.session'
 SESSION_B64_FILE = 'session.b64'
-BOT_TOKEN = '8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4'
 SOURCE_CHANNEL = '@blvckrooom'
 TARGET_GROUP_ID = -1003991874844  # @trifferi_katalog
 MENTION_REPLACE = '@esen_baevich'
@@ -26,7 +25,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
 
-# ===== СПИСОК ВСЕХ ТЕМ (ПО ТВОИМ СКРИНШОТАМ) =====
+# ===== СПИСОК ВСЕХ ТЕМ =====
 ALL_TOPICS = [
     "Arcteryx", "GIVENCHY", "Классическая мужская одежда", "MAISON MARGIELA",
     "WELLDONE", "AMIRI", "Женская обувь II", "Сумки Roger Vivier",
@@ -94,7 +93,6 @@ class AILogger:
 
 # ===== ЗАГРУЗКА СЕССИИ =====
 async def load_session():
-    """Загружает сессию из .b64 файла"""
     if not os.path.exists(SESSION_B64_FILE):
         logger.error("❌ Нет сессии!")
         return False
@@ -114,9 +112,9 @@ async def load_session():
         logger.error(f"❌ Ошибка загрузки сессии: {e}")
         return False
 
-# ===== СОЗДАНИЕ ТЕМ (через сессию) =====
+# ===== СОЗДАНИЕ ТЕМ (через send_message) =====
 async def create_all_topics():
-    logger.info("🚀 Запуск менеджера тем через сессию...")
+    logger.info("🚀 Запуск менеджера тем...")
     
     if not await load_session():
         return
@@ -141,13 +139,12 @@ async def create_all_topics():
                 logger.info(f"ℹ️ Тема '{topic_name}' уже существует")
                 continue
             try:
-                random_id = random.randint(0, 2**63 - 1)
-                await client(SendMessageRequest(
-                    peer=group,
-                    message=f"📌 **{topic_name}**\n\n(Тема создана автоматически)",
-                    reply_to_msg_id=0,
-                    random_id=random_id
-                ))
+                # Используем send_message вместо SendMessageRequest (работает в 1.44.0)
+                await client.send_message(
+                    entity=group,
+                    message=f"📌 **{topic_name}**\n\n(Тема создана)",
+                    reply_to=0  # 0 создаёт тему
+                )
                 logger.info(f"✅ Создана тема: {topic_name}")
                 created_count += 1
                 await asyncio.sleep(0.5)
@@ -159,7 +156,7 @@ async def create_all_topics():
     finally:
         await client.disconnect()
 
-# ===== ПОЛУЧЕНИЕ ТЕМ (через сессию) =====
+# ===== ПОЛУЧЕНИЕ ТЕМ =====
 async def get_topic_ids():
     if not await load_session():
         return {}
@@ -182,7 +179,7 @@ async def get_topic_ids():
         await client.disconnect()
         return {}
 
-# ===== ОСНОВНОЙ БОТ (через сессию) =====
+# ===== ОСНОВНОЙ БОТ =====
 async def process_albums(limit=100):
     logger.info(f"🚀 Запуск основного бота, обработка {limit} сообщений")
 
