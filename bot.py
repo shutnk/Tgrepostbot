@@ -6,10 +6,10 @@ import base64
 import json
 import traceback
 import sys
-import random
 from flask import Flask, jsonify
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
+from telethon.tl.functions.channels import CreateForumTopicRequest
 
 # ===== НАСТРОЙКИ =====
 API_ID = 17349
@@ -112,7 +112,7 @@ async def load_session():
         logger.error(f"❌ Ошибка загрузки сессии: {e}")
         return False
 
-# ===== СОЗДАНИЕ ТЕМ (через send_message) =====
+# ===== СОЗДАНИЕ ТЕМ (через CreateForumTopicRequest) =====
 async def create_all_topics():
     logger.info("🚀 Запуск менеджера тем...")
     
@@ -124,6 +124,8 @@ async def create_all_topics():
 
     try:
         group = await client.get_entity(TARGET_GROUP_ID)
+        
+        # Получаем существующие темы через диалоги
         dialogs = await client.get_dialogs()
         existing_topics = set()
         for dialog in dialogs:
@@ -139,13 +141,12 @@ async def create_all_topics():
                 logger.info(f"ℹ️ Тема '{topic_name}' уже существует")
                 continue
             try:
-                # Используем send_message вместо SendMessageRequest (работает в 1.44.0)
-                await client.send_message(
-                    entity=group,
-                    message=f"📌 **{topic_name}**\n\n(Тема создана)",
-                    reply_to=0  # 0 создаёт тему
-                )
-                logger.info(f"✅ Создана тема: {topic_name}")
+                # Создаём тему через правильный метод
+                result = await client(CreateForumTopicRequest(
+                    channel=group,
+                    title=topic_name
+                ))
+                logger.info(f"✅ Создана тема: {topic_name} (ID: {result.id})")
                 created_count += 1
                 await asyncio.sleep(0.5)
             except Exception as e:
