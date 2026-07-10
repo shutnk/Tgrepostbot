@@ -71,9 +71,10 @@ def load_session():
         logger.error(f"❌ Ошибка загрузки сессии: {e}")
         return None
 
-# ===== СОЗДАНИЕ ТЕМЫ =====
+# ===== СОЗДАНИЕ ТЕМЫ (через API) =====
 async def create_topic(client, group, topic_name):
     try:
+        # Создаём тему через прямой API-вызов
         result = await client(CreateForumTopicRequest(
             channel=group,
             title=topic_name
