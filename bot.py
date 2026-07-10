@@ -9,6 +9,7 @@ from flask import Flask, jsonify
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import GetHistoryRequest
+from telethon.tl.functions.channels import CreateForumTopicRequest
 
 # ===== НАСТРОЙКИ =====
 API_ID = 17349
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
 
-# ===== СПИСОК ВСЕХ ТЕМ (из твоих скриншотов) =====
+# ===== СПИСОК ВСЕХ ТЕМ =====
 ALL_TOPICS = [
     "Arcteryx", "GIVENCHY", "Классическая мужская одежда", "MAISON MARGIELA",
     "WELLDONE", "AMIRI", "Женская обувь II", "Сумки Roger Vivier",
@@ -70,49 +71,34 @@ def load_session():
         logger.error(f"❌ Ошибка загрузки сессии: {e}")
         return None
 
-# ===== ПОЛУЧЕНИЕ ID ТЕМЫ ЧЕРЕЗ СООБЩЕНИЯ =====
-async def get_topic_id_from_messages(client, group, topic_name):
-    """Ищет ID темы через последние сообщения группы"""
-    try:
-        messages = await client.get_messages(group, limit=50)
-        for msg in messages:
-            if msg.message and topic_name in msg.message:
-                if msg.reply_to and msg.reply_to.forum_topic:
-                    return msg.reply_to.forum_topic.id
-        return None
-    except Exception as e:
-        logger.error(f"❌ Ошибка поиска темы: {e}")
-        return None
-
-# ===== СОЗДАНИЕ ТЕМЫ (двухшаговый метод) =====
+# ===== СОЗДАНИЕ ТЕМЫ =====
 async def create_topic(client, group, topic_name):
     try:
-        # Шаг 1: Отправляем сообщение с названием темы
-        msg1 = await client.send_message(group, f"📌 {topic_name}")
-        logger.info(f"✅ Шаг 1: Сообщение для темы {topic_name} отправлено")
-
-        # Шаг 2: Отправляем второе сообщение в ответ на первое
-        await client.send_message(
-            group,
-            f"🔥 Тема создана: {topic_name}",
-            reply_to=msg1.id
-        )
-        logger.info(f"✅ Шаг 2: Тема {topic_name} создана!")
-
-        # Ждём, чтобы Telegram успел обработать
-        await asyncio.sleep(2)
-
-        # Получаем ID темы через сообщения
-        topic_id = await get_topic_id_from_messages(client, group, topic_name)
-        if topic_id:
-            logger.info(f"✅ ID темы {topic_name}: {topic_id}")
-            return topic_id
-        else:
-            logger.warning(f"⚠️ ID темы {topic_name} не найден, но тема создана")
-            return None
+        result = await client(CreateForumTopicRequest(
+            channel=group,
+            title=topic_name
+        ))
+        logger.info(f"✅ Создана тема: {topic_name} (ID: {result.id})")
+        return result.id
     except Exception as e:
         logger.error(f"❌ Ошибка создания темы {topic_name}: {e}")
         return None
+
+# ===== ПОЛУЧЕНИЕ ТЕМ =====
+async def get_topic_ids(client, group):
+    try:
+        dialogs = await client.get_dialogs()
+        topics = {}
+        for dialog in dialogs:
+            if dialog.entity.id == TARGET_GROUP_ID and hasattr(dialog, 'forum_topics'):
+                if dialog.forum_topics:
+                    for topic in dialog.forum_topics:
+                        topics[topic.title] = topic.id
+                    break
+        return topics
+    except Exception as e:
+        logger.error(f"❌ Ошибка получения тем: {e}")
+        return {}
 
 # ===== ОСНОВНОЙ БОТ =====
 async def process_albums(limit=100):
@@ -178,12 +164,8 @@ async def process_albums(limit=100):
 
     group = await client.get_entity(TARGET_GROUP_ID)
 
-    # Получаем существующие ID тем через сообщения
-    topic_ids = {}
-    for topic_name in ALL_TOPICS:
-        topic_id = await get_topic_id_from_messages(client, group, topic_name)
-        if topic_id:
-            topic_ids[topic_name] = topic_id
+    # Получаем существующие темы
+    topic_ids = await get_topic_ids(client, group)
 
     # Создаём недостающие темы
     for topic_name in ALL_TOPICS:
