@@ -39,7 +39,7 @@ ALL_TOPICS = [
     "CHROME HEARTS Украшения из серебра", "Сумки Chrome Hearts", "Товары для дома",
     "Сумки MIU MIU", "Сумки YSL", "Ремни", "Dolce&Gabbana",
     "Купальники и пляжная одежда", "Loewe", "BALENCIAGA", "FENDI",
-    "GUCCI", "Сумки Jacquemus", "Сумки GOYARD", "Ralph Lauren", "🔥 HERMES",
+    "GUCCI", "Сумки Jacquemus", "Сумки GOYARD", "Ralph Lauren", "HERMES",
     "BOTTEGA VENETA", "Одежда для детей", "Кроссовки [LUXURY SNEAKERS]",
     "Женские сапоги", "Очки", "Украшения(бижутерия)", "Кроссовки BALENCIAGA",
     "Классическая мужская обувь", "Кроссовки Louis Vuitton", "CHROME HEARTS",
@@ -70,44 +70,49 @@ def load_session():
         logger.error(f"❌ Ошибка загрузки сессии: {e}")
         return None
 
-# ===== СОЗДАНИЕ ТЕМЫ (Секретный метод для 1.44.0) =====
+# ===== ПОЛУЧЕНИЕ ID ТЕМЫ ЧЕРЕЗ СООБЩЕНИЯ =====
+async def get_topic_id_from_messages(client, group, topic_name):
+    """Ищет ID темы через последние сообщения группы"""
+    try:
+        messages = await client.get_messages(group, limit=50)
+        for msg in messages:
+            if msg.message and topic_name in msg.message:
+                if msg.reply_to and msg.reply_to.forum_topic:
+                    return msg.reply_to.forum_topic.id
+        return None
+    except Exception as e:
+        logger.error(f"❌ Ошибка поиска темы: {e}")
+        return None
+
+# ===== СОЗДАНИЕ ТЕМЫ (двухшаговый метод) =====
 async def create_topic(client, group, topic_name):
     try:
         # Шаг 1: Отправляем сообщение с названием темы
-        msg = await client.send_message(group, f"📌 {topic_name}")
-        logger.info(f"✅ Шаг 1: Сообщение отправлено для темы {topic_name} (ID: {msg.id})")
-        
+        msg1 = await client.send_message(group, f"📌 {topic_name}")
+        logger.info(f"✅ Шаг 1: Сообщение для темы {topic_name} отправлено")
+
         # Шаг 2: Отправляем второе сообщение в ответ на первое
-        # Telegram автоматически превратит это в тему
         await client.send_message(
             group,
             f"🔥 Тема создана: {topic_name}",
-            reply_to=msg.id
+            reply_to=msg1.id
         )
         logger.info(f"✅ Шаг 2: Тема {topic_name} создана!")
-        
-        # Ждём, чтобы Telegram успел создать тему
-        await asyncio.sleep(1)
-        return True
+
+        # Ждём, чтобы Telegram успел обработать
+        await asyncio.sleep(2)
+
+        # Получаем ID темы через сообщения
+        topic_id = await get_topic_id_from_messages(client, group, topic_name)
+        if topic_id:
+            logger.info(f"✅ ID темы {topic_name}: {topic_id}")
+            return topic_id
+        else:
+            logger.warning(f"⚠️ ID темы {topic_name} не найден, но тема создана")
+            return None
     except Exception as e:
         logger.error(f"❌ Ошибка создания темы {topic_name}: {e}")
-        return False
-
-# ===== ПОЛУЧЕНИЕ ID ТЕМ =====
-async def get_topic_ids(client):
-    try:
-        dialogs = await client.get_dialogs()
-        topics = {}
-        for dialog in dialogs:
-            if dialog.entity.id == TARGET_GROUP_ID and hasattr(dialog, 'forum_topics'):
-                if dialog.forum_topics:
-                    for topic in dialog.forum_topics:
-                        topics[topic.title] = topic.id
-                    break
-        return topics
-    except Exception as e:
-        logger.error(f"❌ Ошибка получения тем: {e}")
-        return {}
+        return None
 
 # ===== ОСНОВНОЙ БОТ =====
 async def process_albums(limit=100):
@@ -172,16 +177,21 @@ async def process_albums(limit=100):
     logger.info(f"📚 Найдено {len(albums)} альбомов")
 
     group = await client.get_entity(TARGET_GROUP_ID)
-    
-    # Сначала создаём все темы, которых ещё нет
-    existing_topics = await get_topic_ids(client)
-    for topic_name in ALL_TOPICS:
-        if topic_name not in existing_topics:
-            logger.info(f"🛠️ Создаю тему: {topic_name}")
-            await create_topic(client, group, topic_name)
 
-    # Обновляем список тем
-    topic_ids = await get_topic_ids(client)
+    # Получаем существующие ID тем через сообщения
+    topic_ids = {}
+    for topic_name in ALL_TOPICS:
+        topic_id = await get_topic_id_from_messages(client, group, topic_name)
+        if topic_id:
+            topic_ids[topic_name] = topic_id
+
+    # Создаём недостающие темы
+    for topic_name in ALL_TOPICS:
+        if topic_name not in topic_ids:
+            logger.info(f"🛠️ Создаю тему: {topic_name}")
+            new_topic_id = await create_topic(client, group, topic_name)
+            if new_topic_id:
+                topic_ids[topic_name] = new_topic_id
 
     total_sent = 0
     for idx, album in enumerate(albums):
@@ -284,7 +294,7 @@ def detect_topic(text):
         "chrome hearts украшения": "CHROME HEARTS Украшения из серебра",
         "шарфы и шапки": "Шарфы и шапки",
         "товары для дома": "Товары для дома",
-        "hermes": "🔥 HERMES",
+        "hermes": "HERMES",
         "chanel": "Chanel",
         "dior": "DIOR",
         "louis vuitton": "Louis Vuitton",
