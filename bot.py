@@ -77,7 +77,7 @@ async def create_topic(client, group, topic_name):
         result = await client._call(
             'channels.createForumTopic',
             {
-                'channel': group,
+                'channel': await client.get_input_entity(group),
                 'title': topic_name
             }
         )
@@ -167,16 +167,16 @@ async def process_albums(limit=100):
 
     group = await client.get_entity(TARGET_GROUP_ID)
 
-    # Получаем существующие темы
-    topic_ids = await get_topic_ids(client, group)
-
-    # Создаём недостающие темы
+    # Сначала создаём все темы из списка
+    logger.info("🛠️ Начинаю создание всех тем...")
     for topic_name in ALL_TOPICS:
-        if topic_name not in topic_ids:
-            logger.info(f"🛠️ Создаю тему: {topic_name}")
-            new_topic_id = await create_topic(client, group, topic_name)
-            if new_topic_id:
-                topic_ids[topic_name] = new_topic_id
+        logger.info(f"🛠️ Проверяю тему: {topic_name}")
+        await create_topic(client, group, topic_name)
+        await asyncio.sleep(0.5)
+
+    # После создания — получаем список тем
+    topic_ids = await get_topic_ids(client, group)
+    logger.info(f"📋 Найдено {len(topic_ids)} тем")
 
     total_sent = 0
     for idx, album in enumerate(albums):
@@ -184,6 +184,10 @@ async def process_albums(limit=100):
         topic = detect_topic(text)
         photos = album["photo_paths"]
         thread_id = topic_ids.get(topic)
+
+        if not thread_id:
+            logger.warning(f"⚠️ Тема '{topic}' не найдена. Отправляю в General.")
+            thread_id = None
 
         for attempt in range(3):
             try:
@@ -195,7 +199,7 @@ async def process_albums(limit=100):
                     parse_mode="markdown",
                     message_thread_id=thread_id
                 )
-                logger.info(f"✅ Отправлен альбом #{idx+1} в {topic}")
+                logger.info(f"✅ Отправлен альбом #{idx+1} в {topic if thread_id else 'General'}")
                 total_sent += 1
                 break
             except Exception as e:
