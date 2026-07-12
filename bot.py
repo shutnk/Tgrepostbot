@@ -55,14 +55,15 @@ ALL_TOPICS = [
     "Одежда Loro/Brunello/Kiton/Zegna"
 ]
 
-# ===== ЗАГРУЗКА СЕССИИ =====
+# ===== ЗАГРУЗКА СЕССИИ (исправленная версия) =====
 def load_session():
     if not os.path.exists(SESSION_B64_FILE):
         logger.error("❌ Нет сессии!")
         return None
 
     try:
-        with open(SESSION_B64_FILE, 'r') as f:
+        # Читаем файл как бинарный, декодируем в строку UTF-8
+        with open(SESSION_B64_FILE, 'rb') as f:
             b64_data = f.read().strip()
         decoded = base64.b64decode(b64_data).decode('utf-8')
         return StringSession(decoded)
@@ -73,7 +74,6 @@ def load_session():
 # ===== СОЗДАНИЕ ТЕМЫ (RAW API через _call) =====
 async def create_topic(client, group, topic_name):
     try:
-        # В Telethon 1.44.0 используем _call() для прямого вызова API
         result = await client._call(
             'channels.createForumTopic',
             {
