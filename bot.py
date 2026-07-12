@@ -4,11 +4,12 @@ import asyncio
 import logging
 import base64
 import json
-import requests
+import random
 from flask import Flask, jsonify
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import GetHistoryRequest
+from telethon.tl.functions.channels import CreateForumTopicRequest
 
 # ===== НАСТРОЙКИ =====
 API_ID = 17349
@@ -70,30 +71,13 @@ def load_session():
         logger.error(f"❌ Ошибка загрузки сессии: {e}")
         return None
 
-# ===== СОЗДАНИЕ ТЕМЫ (через прямой HTTP-запрос) =====
+# ===== СОЗДАНИЕ ТЕМЫ =====
 async def create_topic(client, group, topic_name):
     try:
-        # Получаем необходимые данные для API
-        channel_id = group.id
-        # Получаем access_hash через get_entity
-        access_hash = group.access_hash
-        
-        # Формируем запрос к Telegram API
-        url = f"https://api.telegram.org/bot{TOPIC_BOT_TOKEN}/createForumTopic"
-        # Но мы не можем использовать бота, потому что у нас есть сессия.
-        # Вместо этого используем внутренний метод Telethon для вызова API
-        # client._call() может вызывать любой API-метод
-        
-        # Создаём тему через API
-        # Используем client._call для прямого вызова
-        result = await client._call(
-            'channels.createForumTopic',
-            {
-                'channel': channel_id,
-                'title': topic_name
-            }
-        )
-        
+        result = await client(CreateForumTopicRequest(
+            channel=group,
+            title=topic_name
+        ))
         logger.info(f"✅ Создана тема: {topic_name} (ID: {result.id})")
         return result.id
     except Exception as e:
@@ -198,10 +182,7 @@ async def process_albums(limit=100):
         photos = album["photo_paths"]
         thread_id = topic_ids.get(topic)
 
-        if not thread_id:
-            logger.warning(f"⚠️ Тема '{topic}' не создалась. Отправляю в General.")
-            thread_id = None
-
+        # Убираем дублирующую проверку — просто отправляем
         for attempt in range(3):
             try:
                 caption = f"📌 **{topic}**\n\n{text}" if text else None
