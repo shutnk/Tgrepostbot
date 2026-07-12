@@ -2,7 +2,6 @@ import os
 import re
 import asyncio
 import logging
-import base64
 import json
 import random
 from flask import Flask, jsonify
@@ -13,7 +12,7 @@ from telethon.tl.functions.messages import GetHistoryRequest
 # ===== НАСТРОЙКИ =====
 API_ID = 17349
 API_HASH = '344583e45741c457fe1862106095a5eb'
-SESSION_B64_FILE = 'session.b64'
+SESSION_STRING = os.environ.get("SESSION_STRING", "")
 SOURCE_CHANNEL = '@blvckrooom'
 TARGET_GROUP_ID = -1003991874844  # @trifferi_katalog
 MENTION_REPLACE = '@esen_baevich'
@@ -55,18 +54,13 @@ ALL_TOPICS = [
     "Одежда Loro/Brunello/Kiton/Zegna"
 ]
 
-# ===== ЗАГРУЗКА СЕССИИ (исправленная версия) =====
+# ===== ЗАГРУЗКА СЕССИИ (из переменной окружения) =====
 def load_session():
-    if not os.path.exists(SESSION_B64_FILE):
-        logger.error("❌ Нет сессии!")
+    if not SESSION_STRING:
+        logger.error("❌ Нет переменной SESSION_STRING!")
         return None
-
     try:
-        # Читаем файл как бинарный, декодируем в строку UTF-8
-        with open(SESSION_B64_FILE, 'rb') as f:
-            b64_data = f.read().strip()
-        decoded = base64.b64decode(b64_data).decode('utf-8')
-        return StringSession(decoded)
+        return StringSession(SESSION_STRING)
     except Exception as e:
         logger.error(f"❌ Ошибка загрузки сессии: {e}")
         return None
@@ -167,17 +161,12 @@ async def process_albums(limit=100):
 
     group = await client.get_entity(TARGET_GROUP_ID)
 
-    # Сначала создаём все темы из списка
-    logger.info("🛠️ Начинаю создание всех тем...")
+    # Создаём все темы
     for topic_name in ALL_TOPICS:
-        logger.info(f"🛠️ Проверяю тему: {topic_name}")
         await create_topic(client, group, topic_name)
         await asyncio.sleep(0.5)
 
-    # После создания — получаем список тем
     topic_ids = await get_topic_ids(client, group)
-    logger.info(f"📋 Найдено {len(topic_ids)} тем")
-
     total_sent = 0
     for idx, album in enumerate(albums):
         text = replace_mentions(album["text"])
