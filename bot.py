@@ -4,12 +4,11 @@ import asyncio
 import logging
 import base64
 import json
-import random
+import requests
 from flask import Flask, jsonify
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import GetHistoryRequest
-from telethon.tl.functions.channels import CreateForumTopicRequest
 
 # ===== НАСТРОЙКИ =====
 API_ID = 17349
@@ -71,14 +70,30 @@ def load_session():
         logger.error(f"❌ Ошибка загрузки сессии: {e}")
         return None
 
-# ===== СОЗДАНИЕ ТЕМЫ (через API) =====
+# ===== СОЗДАНИЕ ТЕМЫ (через прямой HTTP-запрос) =====
 async def create_topic(client, group, topic_name):
     try:
-        # Создаём тему через прямой API-вызов
-        result = await client(CreateForumTopicRequest(
-            channel=group,
-            title=topic_name
-        ))
+        # Получаем необходимые данные для API
+        channel_id = group.id
+        # Получаем access_hash через get_entity
+        access_hash = group.access_hash
+        
+        # Формируем запрос к Telegram API
+        url = f"https://api.telegram.org/bot{TOPIC_BOT_TOKEN}/createForumTopic"
+        # Но мы не можем использовать бота, потому что у нас есть сессия.
+        # Вместо этого используем внутренний метод Telethon для вызова API
+        # client._call() может вызывать любой API-метод
+        
+        # Создаём тему через API
+        # Используем client._call для прямого вызова
+        result = await client._call(
+            'channels.createForumTopic',
+            {
+                'channel': channel_id,
+                'title': topic_name
+            }
+        )
+        
         logger.info(f"✅ Создана тема: {topic_name} (ID: {result.id})")
         return result.id
     except Exception as e:
