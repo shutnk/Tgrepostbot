@@ -9,7 +9,6 @@ from flask import Flask, jsonify
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import GetHistoryRequest
-from telethon.tl.functions.channels import CreateForumTopicRequest
 
 # ===== НАСТРОЙКИ =====
 API_ID = 17349
@@ -71,13 +70,17 @@ def load_session():
         logger.error(f"❌ Ошибка загрузки сессии: {e}")
         return None
 
-# ===== СОЗДАНИЕ ТЕМЫ =====
+# ===== СОЗДАНИЕ ТЕМЫ (RAW API через _call) =====
 async def create_topic(client, group, topic_name):
     try:
-        result = await client(CreateForumTopicRequest(
-            channel=group,
-            title=topic_name
-        ))
+        # В Telethon 1.44.0 используем _call() для прямого вызова API
+        result = await client._call(
+            'channels.createForumTopic',
+            {
+                'channel': group,
+                'title': topic_name
+            }
+        )
         logger.info(f"✅ Создана тема: {topic_name} (ID: {result.id})")
         return result.id
     except Exception as e:
@@ -182,7 +185,6 @@ async def process_albums(limit=100):
         photos = album["photo_paths"]
         thread_id = topic_ids.get(topic)
 
-        # Отправляем в тему (если thread_id None — отправится в General)
         for attempt in range(3):
             try:
                 caption = f"📌 **{topic}**\n\n{text}" if text else None
