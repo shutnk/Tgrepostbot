@@ -182,7 +182,7 @@ async def process_albums(limit=100):
         photos = album["photo_paths"]
         thread_id = topic_ids.get(topic)
 
-        # Убираем дублирующую проверку — просто отправляем
+        # Отправляем в тему (если thread_id None — отправится в General)
         for attempt in range(3):
             try:
                 caption = f"📌 **{topic}**\n\n{text}" if text else None
