@@ -74,8 +74,29 @@ def process_text(text):
     text = re.sub(r'\n{3,}', '\n\n', text).strip()
     return text
 
+async def ensure_subscribed():
+    try:
+        chat_info = tg_request("getChat", {"chat_id": SOURCE_CHANNEL})
+        if chat_info and chat_info.get("ok"):
+            logger.info(f"✅ Бот уже в канале {SOURCE_CHANNEL}")
+            return True
+        
+        result = tg_request("joinChannel", {"chat_id": SOURCE_CHANNEL})
+        if result and result.get("ok"):
+            logger.info(f"✅ Бот подписан на {SOURCE_CHANNEL}")
+            return True
+        else:
+            logger.error(f"❌ Не удалось подписать бота на {SOURCE_CHANNEL}")
+            return False
+    except Exception as e:
+        logger.error(f"❌ Ошибка подписки: {e}")
+        return False
+
 async def process_updates():
     logger.info("🚀 Запуск бота через Bot API...")
+    
+    # Подписываем бота на канал
+    await ensure_subscribed()
     
     # Получаем ID канала источника
     source_info = tg_request("getChat", {"chat_id": SOURCE_CHANNEL})
@@ -112,7 +133,7 @@ async def process_updates():
                 text = msg.get("text") or msg.get("caption") or ""
                 new_text = process_text(text)
                 
-                # Определяем тему по ключевым словам
+                # Определяем тему
                 topic_name = "General"
                 lower_text = new_text.lower()
                 if "сумка" in lower_text or "bag" in lower_text:
@@ -133,8 +154,7 @@ async def process_updates():
                         resp = tg_request("sendPhoto", {
                             "chat_id": DEST_CHANNEL,
                             "photo": file_id,
-                            "caption": new_text,
-                            "message_thread_id": None  # Bot API не поддерживает темы, отправляем в общий чат
+                            "caption": new_text
                         })
                     elif "video" in msg:
                         file_id = msg["video"]["file_id"]
