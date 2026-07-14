@@ -20,6 +20,7 @@ MENTION_REPLACE = '@esen_baevich'
 API_ID = 17349
 API_HASH = '344583e45741c457fe1862106095a5eb'
 SESSION_FILE = 'session.session'
+SESSION_B64_FILE = 'session.b64'
 SOURCE_CHANNEL = '@blvckrooom'
 
 app = Flask(__name__)
@@ -93,7 +94,6 @@ def replace_mentions(text):
 async def get_topic_ids(client):
     try:
         group = await client.get_entity(TARGET_GROUP_ID)
-        # Правильный способ для Telethon 1.44.0
         result = await client.get_forum_topics(group, limit=100)
         topic_ids = {t.title: t.id for t in result.topics}
         logger.info(f"✅ Загружено {len(topic_ids)} тем")
@@ -102,7 +102,8 @@ async def get_topic_ids(client):
         logger.error(f"❌ Ошибка получения тем: {e}")
         return {}
 
-async def process_albums(limit=100):
+def load_session():
+    # 1. Сначала пробуем из переменной окружения
     session_b64 = os.environ.get("SESSION_B64")
     if session_b64:
         try:
@@ -111,11 +112,34 @@ async def process_albums(limit=100):
                 f.write(decoded)
             os.chmod(SESSION_FILE, 0o600)
             logger.info("✅ Сессия загружена из SESSION_B64")
+            return True
         except Exception as e:
             logger.error(f"❌ Ошибка загрузки SESSION_B64: {e}")
-            return False
-    elif not os.path.exists(SESSION_FILE):
-        logger.error("❌ Нет сессии (ни файла, ни SESSION_B64)")
+    
+    # 2. Если нет — пробуем из файла session.b64
+    if os.path.exists(SESSION_B64_FILE):
+        try:
+            with open(SESSION_B64_FILE, 'r') as f:
+                b64_data = f.read().strip()
+            decoded = base64.b64decode(b64_data)
+            with open(SESSION_FILE, 'wb') as f:
+                f.write(decoded)
+            os.chmod(SESSION_FILE, 0o600)
+            logger.info("✅ Сессия загружена из session.b64")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Ошибка загрузки session.b64: {e}")
+    
+    # 3. Если есть файл session.session — используем его
+    if os.path.exists(SESSION_FILE):
+        logger.info("✅ Сессия загружена из session.session")
+        return True
+    
+    logger.error("❌ Нет сессии (ни файла, ни SESSION_B64)")
+    return False
+
+async def process_albums(limit=100):
+    if not load_session():
         return False
 
     client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
@@ -195,7 +219,6 @@ async def process_albums(limit=100):
             await client.connect()
             group = await client.get_entity(TARGET_GROUP_ID)
             try:
-                # ПРАВИЛЬНЫЙ СПОСОБ СОЗДАНИЯ ТЕМЫ В TELETHON 1.44.0
                 result = await client.create_forum_topic(group, topic)
                 thread_id = result.id
                 topic_ids[topic] = thread_id
