@@ -1,260 +1,179 @@
 import os
-import re
-import time
 import asyncio
 import logging
-import base64
-import json
+import re
+import time
 import requests
 from flask import Flask, jsonify
-from telethon import TelegramClient
-from telethon.tl.functions.messages import GetHistoryRequest
-from telethon.tl.functions.channels import JoinChannelRequest
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
-TARGET_GROUP_ID = -1003991874844
-MENTION_REPLACE = '@esen_baevich'
+# ================= НАСТРОЙКИ =================
+BOT_TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
+SOURCE_CHANNEL = "@blvckrooom"
+DEST_CHANNEL = "@trifferi02"
+OWNER_USERNAME = "nurikadambol"
+OLD_USERNAMES = ["blvckrooom", "thesameseven"]
 
-API_ID = 17349
-API_HASH = '344583e45741c457fe1862106095a5eb'
-SESSION_FILE = 'session.session'
-SESSION_B64_FILE = 'session.b64'
-SOURCE_CHANNEL_USERNAME = '@blvckrooom'
+DB_PATH = "posted.db"
+# ==============================================
 
 app = Flask(__name__)
 
-TOPIC_MAP = {
-    "prada": "Сумки PRADA",
-    "ralph lauren": "Ralph Lauren",
-    "gucci": "GUCCI",
-    "fendi": "FENDI",
-    "zimmermann": "ZIMMERMANN",
-    "hermes": "Сумки Hermes",
-    "chanel": "Chanel",
-    "dior": "Сумки DIOR",
-    "louis vuitton": "Сумки Louis Vuitton",
-    "balenciaga": "BALENCIAGA",
-    "loewe": "Сумки Loewe",
-    "bottega veneta": "Сумки BOTTEGA VENETA",
-    "givenchy": "GIVENCHY",
-    "yves saint laurent": "Yves Saint Laurent",
-    "miu miu": "Сумки MIU MIU",
-    "the row": "Сумки THE ROW",
-    "zegna": "Одежда Loro/Brunello/Kiton/Zegna",
-    "loro piana": "Сумки Loro Piana",
-    "brunello cucinelli": "Одежда Loro/Brunello/Kiton/Zegna",
-    "acne studios": "Acne Studios",
-    "maison margiela": "Сумки Maison Margiela",
-    "lemaire": "Сумки LEMAIRE",
-    "celine": "Сумки CELINE",
-    "chrome hearts": "CHROME HEARTS",
-    "moncler": "Moncler",
-    "burberry": "BURBERRY",
-    "canada goose": "CANADA GOOSE",
-    "max mara": "Max Mara",
-    "mcm": "Сумки MCM",
-    "moynat": "Сумки MOYNAT PARIS",
-    "юбка": "Женская одежда",
-    "платье": "Женская одежда",
-    "брюки": "Женская одежда",
-    "шорты": "Женская одежда",
-    "футболка": "Женская одежда",
-    "рубашка": "Женская одежда",
-    "топ": "Женская одежда",
-    "куртка": "Зимние куртки",
-    "пальто": "Пальто",
-    "обувь": "Обувь Hermes",
-    "кроссовки": "Кроссовки [LUXURY SNEAKERS]",
-    "часы": "Часы",
-    "ремень": "Ремни",
-    "сумка": "Ассортимент",
-    "очки": "Очки",
-    "украшения": "Ювелирные украшения",
-    "шапка": "Шарфы и шапки",
-    "шарф": "Шарфы и шапки",
-}
+def init_db():
+    import sqlite3
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS posted_messages (
+            source_id INTEGER PRIMARY KEY,
+            dest_id INTEGER,
+            source_chat_id INTEGER,
+            posted_at TEXT
+        )
+    """)
+    conn.commit()
+    return conn
 
-def detect_topic(text):
+def is_posted(source_msg_id, source_chat_id):
+    import sqlite3
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT 1 FROM posted_messages WHERE source_id = ? AND source_chat_id = ?",
+        (source_msg_id, source_chat_id)
+    )
+    return cursor.fetchone() is not None
+
+def save_posted(source_msg_id, dest_msg_id, source_chat_id):
+    import sqlite3
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT OR IGNORE INTO posted_messages (source_id, dest_id, source_chat_id, posted_at) VALUES (?, ?, ?, ?)",
+        (source_msg_id, dest_msg_id, source_chat_id, time.strftime("%Y-%m-%d %H:%M:%S"))
+    )
+    conn.commit()
+
+def tg_request(method, data):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
+    try:
+        resp = requests.post(url, data=data, timeout=30)
+        return resp.json()
+    except Exception as e:
+        logger.error(f"❌ Ошибка API: {e}")
+        return None
+
+def process_text(text):
     if not text:
-        return "Ассортимент"
-    text_lower = text.lower()
-    if 'кроссовки' in text_lower: return "Кроссовки [LUXURY SNEAKERS]"
-    if 'обувь' in text_lower: return "Обувь Hermes"
-    if 'сумка' in text_lower: return "Сумки Hermes"
-    for key, topic in TOPIC_MAP.items():
-        if key in text_lower:
-            return topic
-    return "Ассортимент"
+        return ""
+    for old in OLD_USERNAMES:
+        text = re.sub(rf'@{old}\b', f'@{OWNER_USERNAME}', text, flags=re.IGNORECASE)
+        text = re.sub(rf'https?://t\.me/{old}\b', '', text, flags=re.IGNORECASE)
+    text = re.sub(r' {2,}', ' ', text)
+    text = re.sub(r'\n{3,}', '\n\n', text).strip()
+    return text
 
-def replace_mentions(text):
-    return re.sub(r'@\w+', MENTION_REPLACE, text)
-
-async def get_topic_ids(client):
-    try:
-        group = await client.get_entity(TARGET_GROUP_ID)
-        result = await client.get_forum_topics(group, limit=100)
-        topic_ids = {t.title: t.id for t in result.topics}
-        logger.info(f"✅ Загружено {len(topic_ids)} тем")
-        return topic_ids
-    except Exception as e:
-        logger.error(f"❌ Ошибка получения тем: {e}")
-        return {}
-
-def load_session():
-    session_b64 = os.environ.get("SESSION_B64")
-    if session_b64:
-        try:
-            decoded = base64.b64decode(session_b64)
-            with open(SESSION_FILE, 'wb') as f:
-                f.write(decoded)
-            os.chmod(SESSION_FILE, 0o600)
-            logger.info("✅ Сессия загружена из SESSION_B64")
-            return True
-        except Exception as e:
-            logger.error(f"❌ Ошибка загрузки SESSION_B64: {e}")
+async def process_updates():
+    logger.info("🚀 Запуск бота через Bot API...")
     
-    if os.path.exists(SESSION_B64_FILE):
-        try:
-            with open(SESSION_B64_FILE, 'r') as f:
-                b64_data = f.read().strip()
-            decoded = base64.b64decode(b64_data)
-            with open(SESSION_FILE, 'wb') as f:
-                f.write(decoded)
-            os.chmod(SESSION_FILE, 0o600)
-            logger.info("✅ Сессия загружена из session.b64")
-            return True
-        except Exception as e:
-            logger.error(f"❌ Ошибка загрузки session.b64: {e}")
-    
-    if os.path.exists(SESSION_FILE):
-        logger.info("✅ Сессия загружена из session.session")
-        return True
-    
-    logger.error("❌ Нет сессии (ни файла, ни SESSION_B64)")
-    return False
-
-async def process_albums(limit=100):
-    if not load_session():
+    # Получаем ID канала источника
+    source_info = tg_request("getChat", {"chat_id": SOURCE_CHANNEL})
+    if not source_info or not source_info.get("ok"):
+        logger.error("❌ Не удалось получить ID канала", SOURCE_CHANNEL)
         return False
-
-    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
-    await client.connect()
-    logger.info("✅ Подключено к аккаунту")
-
-    try:
-        channel = await client.get_entity(SOURCE_CHANNEL_USERNAME)
-    except Exception as e:
-        logger.error(f"❌ Ошибка получения канала: {e}. Пробуем обход...")
-        # Попробуем через ID, если знаешь его
-        try:
-            channel = await client.get_entity(-1002240968436) # Примерный ID (если не подойдёт, удали эту строку)
-            logger.info("✅ Канал получен через ID")
-        except:
-            logger.error(f"❌ Не удалось получить канал даже через ID")
-            await client.disconnect()
-            return False
-
-    topic_ids = await get_topic_ids(client)
-    if not topic_ids:
-        logger.error("❌ Не удалось загрузить ID тем")
-        await client.disconnect()
-        return False
-
-    # ИСПОЛЬЗУЕМ get_messages ВМЕСТО GetHistoryRequest (РАБОТАЕТ НАДЁЖНЕЕ)
-    messages = await client.get_messages(channel, limit=limit)
+    source_chat_id = source_info["result"]["id"]
     
-    albums = []
-    i = 0
-    while i < len(messages):
-        msg = messages[i]
-        if not msg.photo:
-            i += 1
-            continue
-        group = [msg]
-        j = i + 1
-        while j < len(messages):
-            nxt = messages[j]
-            if nxt.photo and abs(nxt.date - msg.date).total_seconds() < 5:
-                group.append(nxt)
-                j += 1
-            else:
-                break
-        if len(group) > 1:
-            text = group[-1].message or ""
-            photo_paths = set()
-            for m in group:
+    last_update_id = 0
+    total_copied = 0
+    
+    while True:
+        try:
+            updates = tg_request("getUpdates", {"offset": last_update_id + 1, "timeout": 30})
+            if not updates or not updates.get("ok"):
+                time.sleep(1)
+                continue
+            
+            for update in updates.get("result", []):
+                last_update_id = update["update_id"]
+                
+                if "channel_post" not in update:
+                    continue
+                
+                msg = update["channel_post"]
+                msg_chat_id = msg.get("chat", {}).get("id")
+                if msg_chat_id != source_chat_id:
+                    continue
+                
+                msg_id = msg["message_id"]
+                if is_posted(msg_id, msg_chat_id):
+                    continue
+                
+                text = msg.get("text") or msg.get("caption") or ""
+                new_text = process_text(text)
+                
+                # Определяем тему по ключевым словам
+                topic_name = "General"
+                lower_text = new_text.lower()
+                if "сумка" in lower_text or "bag" in lower_text:
+                    topic_name = "Сумки"
+                elif "обувь" in lower_text or "shoe" in lower_text:
+                    topic_name = "Обувь"
+                elif "куртка" in lower_text or "jacket" in lower_text:
+                    topic_name = "Куртки"
+                elif "кроссовки" in lower_text or "sneaker" in lower_text:
+                    topic_name = "Кроссовки"
+                elif "пальто" in lower_text or "coat" in lower_text:
+                    topic_name = "Пальто"
+                
                 try:
-                    p = await client.download_media(m, file=f"temp_{m.id}.jpg")
-                    if p:
-                        photo_paths.add(p)
-                except:
-                    pass
-            if photo_paths:
-                albums.append({"text": text, "photo_paths": list(photo_paths)})
-        i = j
-
-    await client.disconnect()
-    logger.info(f"📚 Найдено {len(albums)} альбомов")
-
-    if not albums:
-        return True
-
-    total_sent = 0
-    for album in albums:
-        text = replace_mentions(album["text"])
-        topic = detect_topic(text)
-        photos = album["photo_paths"]
-
-        thread_id = topic_ids.get(topic)
-        if not thread_id:
-            logger.warning(f"⚠️ Тема '{topic}' не найдена, пытаюсь создать...")
-            client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
-            await client.connect()
-            group = await client.get_entity(TARGET_GROUP_ID)
-            try:
-                result = await client.create_forum_topic(group, topic)
-                thread_id = result.id
-                topic_ids[topic] = thread_id
-                logger.info(f"✅ Тема '{topic}' создана (ID: {thread_id})")
-            except Exception as e:
-                logger.error(f"❌ Ошибка создания темы {topic}: {e}")
-            await client.disconnect()
-
-        if thread_id:
-            media = []
-            for idx, p in enumerate(photos):
-                media.append({
-                    "type": "photo",
-                    "media": f"attach://photo{idx}.jpg"
-                })
-                if idx == 0:
-                    media[-1]["caption"] = f"📌 **{topic}**\n\n{text}"
-                    media[-1]["parse_mode"] = "Markdown"
-
-            files = {}
-            for idx, p in enumerate(photos):
-                files[f"photo{idx}.jpg"] = open(p, 'rb')
-
-            url = f"https://api.telegram.org/bot{TOKEN}/sendMediaGroup"
-            payload = {
-                "chat_id": TARGET_GROUP_ID,
-                "media": json.dumps(media),
-                "message_thread_id": thread_id
-            }
-            try:
-                requests.post(url, data=payload, files=files, timeout=30)
-                for f in files.values():
-                    f.close()
-                logger.info(f"📚 Альбом ({len(photos)} фото) в {topic} (ID: {thread_id})")
-                total_sent += 1
-            except Exception as e:
-                logger.error(f"❌ Ошибка отправки альбома: {e}")
-
-    logger.info(f"✅ Обработано {total_sent} альбомов")
-    return True
+                    resp = None
+                    if "photo" in msg:
+                        file_id = msg["photo"][-1]["file_id"]
+                        resp = tg_request("sendPhoto", {
+                            "chat_id": DEST_CHANNEL,
+                            "photo": file_id,
+                            "caption": new_text,
+                            "message_thread_id": None  # Bot API не поддерживает темы, отправляем в общий чат
+                        })
+                    elif "video" in msg:
+                        file_id = msg["video"]["file_id"]
+                        resp = tg_request("sendVideo", {
+                            "chat_id": DEST_CHANNEL,
+                            "video": file_id,
+                            "caption": new_text
+                        })
+                    elif "document" in msg:
+                        file_id = msg["document"]["file_id"]
+                        resp = tg_request("sendDocument", {
+                            "chat_id": DEST_CHANNEL,
+                            "document": file_id,
+                            "caption": new_text
+                        })
+                    elif new_text:
+                        resp = tg_request("sendMessage", {
+                            "chat_id": DEST_CHANNEL,
+                            "text": new_text
+                        })
+                    
+                    if resp and resp.get("ok"):
+                        dest_msg_id = resp["result"]["message_id"]
+                        save_posted(msg_id, dest_msg_id, msg_chat_id)
+                        total_copied += 1
+                        logger.info(f"✅ Пост #{msg_id} скопирован (Всего: {total_copied})")
+                    else:
+                        logger.error(f"❌ Ошибка отправки поста #{msg_id}: {resp}")
+                    
+                except Exception as e:
+                    logger.error(f"❌ Ошибка отправки: {e}")
+                
+                time.sleep(1)
+            
+            time.sleep(5)
+            
+        except Exception as e:
+            logger.error(f"❌ Критическая ошибка: {e}")
+            time.sleep(30)
 
 @app.route("/")
 def index():
@@ -262,10 +181,9 @@ def index():
 
 @app.route("/health")
 def health():
-    asyncio.run(process_albums(limit=100))
+    asyncio.run(process_updates())
     return jsonify({"status": "ok"})
 
 if __name__ == "__main__":
-    asyncio.run(process_albums(limit=100))
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
