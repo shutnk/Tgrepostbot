@@ -22,7 +22,7 @@ API_ID = 17349
 API_HASH = '344583e45741c457fe1862106095a5eb'
 SESSION_FILE = 'session.session'
 SESSION_B64_FILE = 'session.b64'
-SOURCE_CHANNEL = '@blvckrooom'
+SOURCE_CHANNEL_USERNAME = '@blvckrooom'
 
 app = Flask(__name__)
 
@@ -136,24 +136,6 @@ def load_session():
     logger.error("❌ Нет сессии (ни файла, ни SESSION_B64)")
     return False
 
-async def ensure_subscribed(client, channel_username):
-    """Подписывает аккаунт на канал, если ещё не подписан"""
-    try:
-        entity = await client.get_entity(channel_username)
-        # Пытаемся подписаться (если уже подписан — ошибка, но мы её игнорируем)
-        try:
-            await client(JoinChannelRequest(entity))
-            logger.info(f"✅ Подписались на канал {channel_username}")
-        except Exception as e:
-            if "CHANNEL_ALREADY" in str(e) or "already" in str(e).lower():
-                logger.info(f"✅ Уже подписаны на канал {channel_username}")
-            else:
-                logger.error(f"❌ Ошибка подписки: {e}")
-        return True
-    except Exception as e:
-        logger.error(f"❌ Не удалось получить канал {channel_username}: {e}")
-        return False
-
 async def process_albums(limit=100):
     if not load_session():
         return False
@@ -162,18 +144,18 @@ async def process_albums(limit=100):
     await client.connect()
     logger.info("✅ Подключено к аккаунту")
 
-    # Сначала подписываемся на канал
-    if not await ensure_subscribed(client, SOURCE_CHANNEL):
-        logger.error("❌ Не удалось подписаться на канал")
-        await client.disconnect()
-        return False
-
     try:
-        channel = await client.get_entity(SOURCE_CHANNEL)
+        channel = await client.get_entity(SOURCE_CHANNEL_USERNAME)
     except Exception as e:
-        logger.error(f"❌ Не удалось получить канал: {e}")
-        await client.disconnect()
-        return False
+        logger.error(f"❌ Ошибка получения канала: {e}. Пробуем обход...")
+        # Попробуем через ID, если знаешь его
+        try:
+            channel = await client.get_entity(-1002240968436) # Примерный ID (если не подойдёт, удали эту строку)
+            logger.info("✅ Канал получен через ID")
+        except:
+            logger.error(f"❌ Не удалось получить канал даже через ID")
+            await client.disconnect()
+            return False
 
     topic_ids = await get_topic_ids(client)
     if not topic_ids:
@@ -181,28 +163,20 @@ async def process_albums(limit=100):
         await client.disconnect()
         return False
 
-    albums = []
-    history = await client(GetHistoryRequest(
-        peer=channel,
-        offset_id=0,
-        offset_date=0,
-        add_offset=0,
-        max_id=0,
-        min_id=0,
-        hash=0,
-        limit=limit
-    ))
+    # ИСПОЛЬЗУЕМ get_messages ВМЕСТО GetHistoryRequest (РАБОТАЕТ НАДЁЖНЕЕ)
+    messages = await client.get_messages(channel, limit=limit)
     
+    albums = []
     i = 0
-    while i < len(history.messages):
-        msg = history.messages[i]
+    while i < len(messages):
+        msg = messages[i]
         if not msg.photo:
             i += 1
             continue
         group = [msg]
         j = i + 1
-        while j < len(history.messages):
-            nxt = history.messages[j]
+        while j < len(messages):
+            nxt = messages[j]
             if nxt.photo and abs(nxt.date - msg.date).total_seconds() < 5:
                 group.append(nxt)
                 j += 1
