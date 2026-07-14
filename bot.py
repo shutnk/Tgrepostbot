@@ -1,121 +1,141 @@
 import os
 import re
+import time
 import asyncio
 import logging
+import base64
 import json
-import random
+import requests
 from flask import Flask, jsonify
 from telethon import TelegramClient
-from telethon.sessions import StringSession
 from telethon.tl.functions.messages import GetHistoryRequest
 
-# ===== НАСТРОЙКИ =====
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
+TARGET_GROUP_ID = -1003991874844
+MENTION_REPLACE = '@esen_baevich'
+
 API_ID = 17349
 API_HASH = '344583e45741c457fe1862106095a5eb'
-SESSION_STRING = os.environ.get("SESSION_STRING", "")
+SESSION_FILE = 'session.session'
 SOURCE_CHANNEL = '@blvckrooom'
-TARGET_GROUP_ID = -1003991874844  # @trifferi_katalog
-MENTION_REPLACE = '@esen_baevich'
-ADMIN_ID = 5468112563
 
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
 
-# ===== СПИСОК ВСЕХ ТЕМ =====
-ALL_TOPICS = [
-    "Arcteryx", "GIVENCHY", "Классическая мужская одежда", "MAISON MARGIELA",
-    "WELLDONE", "AMIRI", "Женская обувь II", "Сумки Roger Vivier",
-    "Сумки Dolce Gabbana", "Сумки Alaïa", "Зимние куртки", "Обувь для детей",
-    "Сумки Ralph Lauren", "Сумки MCM", "Ассортимент", "Пальто",
-    "ENFANTS RICHES DEPRIMES", "Ювелирные украшения", "Обувь Louis Vuitton",
-    "Сумки MOYNAT PARIS", "Сумки CELINE", "Лоферы Loro Piana",
-    "Сумки Maison Margiela", "CELINE", "Сумки Acne Studios", "MIU MIU",
-    "Сумки LEMAIRE", "CANADA GOOSE", "Yves Saint Laurent", "AMI Paris",
-    "Кроссовки LOEWE", "Кроссовки GUCCI", "Чемоданы и дорожные сумки",
-    "Сумки BVLGARI", "Сумки Manolo Blahnik", "Обувь Alaïa", "BURBERRY",
-    "Moncler", "Обвесы на сумку", "Обувь для пляжа и бассейна",
-    "CHROME HEARTS Украшения из серебра", "Сумки Chrome Hearts", "Товары для дома",
-    "Сумки MIU MIU", "Сумки YSL", "Ремни", "Dolce&Gabbana",
-    "Купальники и пляжная одежда", "Loewe", "BALENCIAGA", "FENDI",
-    "GUCCI", "Сумки Jacquemus", "Сумки GOYARD", "Ralph Lauren", "HERMES",
-    "BOTTEGA VENETA", "Одежда для детей", "Кроссовки [LUXURY SNEAKERS]",
-    "Женские сапоги", "Очки", "Украшения(бижутерия)", "Кроссовки BALENCIAGA",
-    "Классическая мужская обувь", "Кроссовки Louis Vuitton", "CHROME HEARTS",
-    "Классическая мужская обувь из экзотической кожи", "Женская обувь",
-    "Женская верхняя одежда(Кожа,кашемир)", "Max Mara", "Украшения Schiaparelli",
-    "Сумки Schiaparelli", "Мужская верхняя одежда", "Обувь Chanel",
-    "Acne Studios", "Chanel", "Обувь Loro/Brunello/Kiton/Zegna",
-    "ZIMMERMANN", "Сумки THE ROW", "Сумки BALENCIAGA", "Сумки Louis Vuitton",
-    "Мужские Сумки", "Сумки DIOR", "Сумки Loro Piana", "Сумки BOTTEGA VENETA",
-    "Сумки PRADA", "Шарфы и шапки", "Часы", "Сумки Hermes", "Обувь Hermes",
-    "Ремень Hermes", "EXCLUSIVE", "DIOR", "PRADA", "Louis Vuitton",
-    "Сумки CHANEL", "Сумки Loewe", "Женская одежда",
-    "Одежда Loro/Brunello/Kiton/Zegna"
-]
+TOPIC_MAP = {
+    "prada": "Сумки PRADA",
+    "ralph lauren": "Ralph Lauren",
+    "gucci": "GUCCI",
+    "fendi": "FENDI",
+    "zimmermann": "ZIMMERMANN",
+    "hermes": "Сумки Hermes",
+    "chanel": "Chanel",
+    "dior": "Сумки DIOR",
+    "louis vuitton": "Сумки Louis Vuitton",
+    "balenciaga": "BALENCIAGA",
+    "loewe": "Сумки Loewe",
+    "bottega veneta": "Сумки BOTTEGA VENETA",
+    "givenchy": "GIVENCHY",
+    "yves saint laurent": "Yves Saint Laurent",
+    "miu miu": "Сумки MIU MIU",
+    "the row": "Сумки THE ROW",
+    "zegna": "Одежда Loro/Brunello/Kiton/Zegna",
+    "loro piana": "Сумки Loro Piana",
+    "brunello cucinelli": "Одежда Loro/Brunello/Kiton/Zegna",
+    "acne studios": "Acne Studios",
+    "maison margiela": "Сумки Maison Margiela",
+    "lemaire": "Сумки LEMAIRE",
+    "celine": "Сумки CELINE",
+    "chrome hearts": "CHROME HEARTS",
+    "moncler": "Moncler",
+    "burberry": "BURBERRY",
+    "canada goose": "CANADA GOOSE",
+    "max mara": "Max Mara",
+    "mcm": "Сумки MCM",
+    "moynat": "Сумки MOYNAT PARIS",
+    "юбка": "Женская одежда",
+    "платье": "Женская одежда",
+    "брюки": "Женская одежда",
+    "шорты": "Женская одежда",
+    "футболка": "Женская одежда",
+    "рубашка": "Женская одежда",
+    "топ": "Женская одежда",
+    "куртка": "Зимние куртки",
+    "пальто": "Пальто",
+    "обувь": "Обувь Hermes",
+    "кроссовки": "Кроссовки [LUXURY SNEAKERS]",
+    "часы": "Часы",
+    "ремень": "Ремни",
+    "сумка": "Ассортимент",
+    "очки": "Очки",
+    "украшения": "Ювелирные украшения",
+    "шапка": "Шарфы и шапки",
+    "шарф": "Шарфы и шапки",
+}
 
-# ===== ЗАГРУЗКА СЕССИИ (из переменной окружения) =====
-def load_session():
-    if not SESSION_STRING:
-        logger.error("❌ Нет переменной SESSION_STRING!")
-        return None
-    try:
-        return StringSession(SESSION_STRING)
-    except Exception as e:
-        logger.error(f"❌ Ошибка загрузки сессии: {e}")
-        return None
+def detect_topic(text):
+    if not text:
+        return "Ассортимент"
+    text_lower = text.lower()
+    if 'кроссовки' in text_lower: return "Кроссовки [LUXURY SNEAKERS]"
+    if 'обувь' in text_lower: return "Обувь Hermes"
+    if 'сумка' in text_lower: return "Сумки Hermes"
+    for key, topic in TOPIC_MAP.items():
+        if key in text_lower:
+            return topic
+    return "Ассортимент"
 
-# ===== СОЗДАНИЕ ТЕМЫ (RAW API через _call) =====
-async def create_topic(client, group, topic_name):
-    try:
-        result = await client._call(
-            'channels.createForumTopic',
-            {
-                'channel': await client.get_input_entity(group),
-                'title': topic_name
-            }
-        )
-        logger.info(f"✅ Создана тема: {topic_name} (ID: {result.id})")
-        return result.id
-    except Exception as e:
-        logger.error(f"❌ Ошибка создания темы {topic_name}: {e}")
-        return None
+def replace_mentions(text):
+    return re.sub(r'@\w+', MENTION_REPLACE, text)
 
-# ===== ПОЛУЧЕНИЕ ТЕМ =====
-async def get_topic_ids(client, group):
+async def get_topic_ids(client):
     try:
-        dialogs = await client.get_dialogs()
-        topics = {}
-        for dialog in dialogs:
-            if dialog.entity.id == TARGET_GROUP_ID and hasattr(dialog, 'forum_topics'):
-                if dialog.forum_topics:
-                    for topic in dialog.forum_topics:
-                        topics[topic.title] = topic.id
-                    break
-        return topics
+        group = await client.get_entity(TARGET_GROUP_ID)
+        # Правильный способ для Telethon 1.44.0
+        result = await client.get_forum_topics(group, limit=100)
+        topic_ids = {t.title: t.id for t in result.topics}
+        logger.info(f"✅ Загружено {len(topic_ids)} тем")
+        return topic_ids
     except Exception as e:
         logger.error(f"❌ Ошибка получения тем: {e}")
         return {}
 
-# ===== ОСНОВНОЙ БОТ =====
 async def process_albums(limit=100):
-    logger.info("🚀 Запуск от имени @nurikadambol...")
-
-    session = load_session()
-    if not session:
+    session_b64 = os.environ.get("SESSION_B64")
+    if session_b64:
+        try:
+            decoded = base64.b64decode(session_b64)
+            with open(SESSION_FILE, 'wb') as f:
+                f.write(decoded)
+            os.chmod(SESSION_FILE, 0o600)
+            logger.info("✅ Сессия загружена из SESSION_B64")
+        except Exception as e:
+            logger.error(f"❌ Ошибка загрузки SESSION_B64: {e}")
+            return False
+    elif not os.path.exists(SESSION_FILE):
+        logger.error("❌ Нет сессии (ни файла, ни SESSION_B64)")
         return False
 
-    client = TelegramClient(session, API_ID, API_HASH)
+    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
     await client.connect()
+    logger.info("✅ Подключено к аккаунту")
 
     try:
         channel = await client.get_entity(SOURCE_CHANNEL)
-        logger.info(f"✅ Канал {SOURCE_CHANNEL} найден")
     except Exception as e:
-        logger.error(f"❌ Ошибка канала: {e}")
+        logger.error(f"❌ Не удалось получить канал: {e}")
         await client.disconnect()
         return False
 
+    topic_ids = await get_topic_ids(client)
+    if not topic_ids:
+        logger.error("❌ Не удалось загрузить ID тем")
+        await client.disconnect()
+        return False
+
+    albums = []
     history = await client(GetHistoryRequest(
         peer=channel,
         offset_id=0,
@@ -126,8 +146,7 @@ async def process_albums(limit=100):
         hash=0,
         limit=limit
     ))
-
-    albums = []
+    
     i = 0
     while i < len(history.messages):
         msg = history.messages[i]
@@ -157,166 +176,66 @@ async def process_albums(limit=100):
                 albums.append({"text": text, "photo_paths": list(photo_paths)})
         i = j
 
+    await client.disconnect()
     logger.info(f"📚 Найдено {len(albums)} альбомов")
 
-    group = await client.get_entity(TARGET_GROUP_ID)
+    if not albums:
+        return True
 
-    # Создаём все темы
-    for topic_name in ALL_TOPICS:
-        await create_topic(client, group, topic_name)
-        await asyncio.sleep(0.5)
-
-    topic_ids = await get_topic_ids(client, group)
     total_sent = 0
-    for idx, album in enumerate(albums):
+    for album in albums:
         text = replace_mentions(album["text"])
         topic = detect_topic(text)
         photos = album["photo_paths"]
+
         thread_id = topic_ids.get(topic)
-
         if not thread_id:
-            logger.warning(f"⚠️ Тема '{topic}' не найдена. Отправляю в General.")
-            thread_id = None
-
-        for attempt in range(3):
+            logger.warning(f"⚠️ Тема '{topic}' не найдена, пытаюсь создать...")
+            client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+            await client.connect()
+            group = await client.get_entity(TARGET_GROUP_ID)
             try:
-                caption = f"📌 **{topic}**\n\n{text}" if text else None
-                await client.send_file(
-                    entity=group,
-                    file=photos,
-                    caption=caption,
-                    parse_mode="markdown",
-                    message_thread_id=thread_id
-                )
-                logger.info(f"✅ Отправлен альбом #{idx+1} в {topic if thread_id else 'General'}")
-                total_sent += 1
-                break
+                # ПРАВИЛЬНЫЙ СПОСОБ СОЗДАНИЯ ТЕМЫ В TELETHON 1.44.0
+                result = await client.create_forum_topic(group, topic)
+                thread_id = result.id
+                topic_ids[topic] = thread_id
+                logger.info(f"✅ Тема '{topic}' создана (ID: {thread_id})")
             except Exception as e:
-                logger.error(f"❌ Попытка {attempt+1}: {e}")
-                await asyncio.sleep(2)
+                logger.error(f"❌ Ошибка создания темы {topic}: {e}")
+            await client.disconnect()
 
-    await client.disconnect()
-    logger.info(f"🎉 Отправлено {total_sent} альбомов.")
+        if thread_id:
+            media = []
+            for idx, p in enumerate(photos):
+                media.append({
+                    "type": "photo",
+                    "media": f"attach://photo{idx}.jpg"
+                })
+                if idx == 0:
+                    media[-1]["caption"] = f"📌 **{topic}**\n\n{text}"
+                    media[-1]["parse_mode"] = "Markdown"
+
+            files = {}
+            for idx, p in enumerate(photos):
+                files[f"photo{idx}.jpg"] = open(p, 'rb')
+
+            url = f"https://api.telegram.org/bot{TOKEN}/sendMediaGroup"
+            payload = {
+                "chat_id": TARGET_GROUP_ID,
+                "media": json.dumps(media),
+                "message_thread_id": thread_id
+            }
+            try:
+                requests.post(url, data=payload, files=files, timeout=30)
+                for f in files.values():
+                    f.close()
+                logger.info(f"📚 Альбом ({len(photos)} фото) в {topic} (ID: {thread_id})")
+                total_sent += 1
+            except Exception as e:
+                logger.error(f"❌ Ошибка отправки альбома: {e}")
+
+    logger.info(f"✅ Обработано {total_sent} альбомов")
     return True
-
-# ===== ОПРЕДЕЛЕНИЕ ТЕМЫ =====
-def detect_topic(text):
-    TOPIC_MAP = {
-        "обувь hermes": "Обувь Hermes",
-        "обувь chanel": "Обувь Chanel",
-        "обувь alaïa": "Обувь Alaïa",
-        "обувь loro piana": "Лоферы Loro Piana",
-        "обувь louis vuitton": "Обувь Louis Vuitton",
-        "женские сапоги": "Женские сапоги",
-        "женская обувь": "Женская обувь",
-        "классическая мужская обувь": "Классическая мужская обувь",
-        "кроссовки": "Кроссовки [LUXURY SNEAKERS]",
-        "сумки hermes": "Сумки Hermes",
-        "сумки chanel": "Сумки CHANEL",
-        "сумки dior": "Сумки DIOR",
-        "сумки louis vuitton": "Сумки Louis Vuitton",
-        "сумки balenciaga": "Сумки BALENCIAGA",
-        "сумки prada": "Сумки PRADA",
-        "сумки goyard": "Сумки GOYARD",
-        "сумки loewe": "Сумки Loewe",
-        "сумки bottega veneta": "Сумки BOTTEGA VENETA",
-        "сумки celine": "Сумки CELINE",
-        "сумки fendi": "Сумки FENDI",
-        "сумки miu miu": "Сумки MIU MIU",
-        "сумки the row": "Сумки THE ROW",
-        "сумки ralph lauren": "Сумки Ralph Lauren",
-        "сумки mcm": "Сумки MCM",
-        "сумки moynat paris": "Сумки MOYNAT PARIS",
-        "сумки acne studios": "Сумки Acne Studios",
-        "сумки lemaire": "Сумки LEMAIRE",
-        "сумки maison margiela": "Сумки Maison Margiela",
-        "сумки chroma hearts": "Сумки Chrome Hearts",
-        "сумки jacquemus": "Сумки Jacquemus",
-        "сумки bulgari": "Сумки BVLGARI",
-        "сумки manolo blahnik": "Сумки Manolo Blahnik",
-        "сумки roger vivier": "Сумки Roger Vivier",
-        "сумки dolce gabbana": "Сумки Dolce Gabbana",
-        "сумки alaïa": "Сумки Alaïa",
-        "сумки schiaparelli": "Сумки Schiaparelli",
-        "мужские сумки": "Мужские Сумки",
-        "чемоданы и дорожные сумки": "Чемоданы и дорожные сумки",
-        "обвесы на сумку": "Обвесы на сумку",
-        "сумка": "Сумки Hermes",
-        "женская одежда": "Женская одежда",
-        "женская верхняя одежда": "Женская верхняя одежда(Кожа,кашемир)",
-        "мужская верхняя одежда": "Мужская верхняя одежда",
-        "зимние куртки": "Зимние куртки",
-        "пальто": "Пальто",
-        "arc'teryx": "Arcteryx",
-        "canada goose": "CANADA GOOSE",
-        "moncler": "Moncler",
-        "burberry": "BURBERRY",
-        "max mara": "Max Mara",
-        "zegna": "Одежда Loro/Brunello/Kiton/Zegna",
-        "loro piana": "Одежда Loro/Brunello/Kiton/Zegna",
-        "brunello cucinelli": "Одежда Loro/Brunello/Kiton/Zegna",
-        "kiton": "Одежда Loro/Brunello/Kiton/Zegna",
-        "одежда для детей": "Одежда для детей",
-        "купальники и пляжная одежда": "Купальники и пляжная одежда",
-        "часы": "Часы",
-        "ремень hermes": "Ремень Hermes",
-        "ремни": "Ремни",
-        "очки": "Очки",
-        "украшения": "Ювелирные украшения",
-        "украшения(бижутерия)": "Украшения(бижутерия)",
-        "украшения schiaparelli": "Украшения Schiaparelli",
-        "chrome hearts украшения": "CHROME HEARTS Украшения из серебра",
-        "шарфы и шапки": "Шарфы и шапки",
-        "товары для дома": "Товары для дома",
-        "hermes": "HERMES",
-        "chanel": "Chanel",
-        "dior": "DIOR",
-        "louis vuitton": "Louis Vuitton",
-        "prada": "PRADA",
-        "gucci": "GUCCI",
-        "fendi": "FENDI",
-        "balenciaga": "BALENCIAGA",
-        "loewe": "Loewe",
-        "bottega veneta": "BOTTEGA VENETA",
-        "celine": "CELINE",
-        "givenchy": "GIVENCHY",
-        "ysl": "Yves Saint Laurent",
-        "yves saint laurent": "Yves Saint Laurent",
-        "miu miu": "MIU MIU",
-        "the row": "THE ROW",
-        "ralph lauren": "Ralph Lauren",
-        "mcm": "MCM",
-        "acne studios": "Acne Studios",
-        "maison margiela": "MAISON MARGIELA",
-        "chrome hearts": "CHROME HEARTS",
-        "jacquemus": "Jacquemus",
-        "moncler": "Moncler",
-        "burberry": "BURBERRY",
-        "canada goose": "CANADA GOOSE",
-        "arc'teryx": "Arcteryx",
-        "max mara": "Max Mara",
-        "well done": "WELLDONE",
-        "welldone": "WELLDONE",
-        "ami paris": "AMI Paris",
-        "alexander wang": "alexander wang",
-        "enfants riches deprimes": "ENFANTS RICHES DEPRIMES",
-        "dolce gabbana": "Dolce&Gabbana",
-        "dolce&gabbana": "Dolce&Gabbana",
-        "schiaparelli": "Schiaparelli",
-        "exclusive": "EXCLUSIVE",
-        "assortiment": "Ассортимент",
-        "ассортимент": "Ассортимент",
-    }
-    if not text:
-        return "Ассортимент"
-    text_lower = text.lower()
-    for key, topic in TOPIC_MAP.items():
-        if key in text_lower:
-            return topic
-    return "Ассортимент"
-
-def replace_mentions(text):
-    return re.sub(r'@\w+', MENTION_REPLACE, text)
 
 @app.route("/")
 def index():
