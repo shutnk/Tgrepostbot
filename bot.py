@@ -1,123 +1,133 @@
-import os
+import asyncio
+import re
 import time
-import logging
-import base64
-from flask import Flask, jsonify
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+import sqlite3
+from telethon import TelegramClient
+from telethon.tl.functions.channels import CreateForumTopicRequest
+from telethon.errors import FloodWaitError
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# ================= НАСТРОЙКИ =================
+API_ID = 2040
+API_HASH = "b18441a1ff607e10a989891a5462e627"
 
-app = Flask(__name__)
+# ВАЖНО: Используем ID, который ты получил (с -100 в начале)
+SOURCE_CHANNEL_ID = -1002028675800
 
-# Настройки
-SOURCE_CHANNEL = "blvckrooom"  # Без @
-DEST_CHANNEL = "trifferi02"    # Без @
+DEST_CHANNEL = "@trifferi02"
+OWNER_USERNAME = "nurikadambol"
 
-def load_session():
-    # Загружаем сессию для браузера (если нужно, но selenium работает через cookies)
-    # В этом варианте мы будем логиниться вручную один раз через браузер, 
-    # а потом сохранять куки.
-    pass
+# Прокси (проверенный)
+PROXY = ('http', '51.15.164.90', 3128)
 
-def start_browser():
-    options = Options()
-    options.add_argument("--headless")  # Работает без окна
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36")
+DB_PATH = "posted.db"
+# ==============================================
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS posted_messages (
+            source_id INTEGER PRIMARY KEY
+        )
+    """)
+    conn.commit()
+    return conn
+
+db = init_db()
+
+def is_posted(source_id):
+    row = db.execute("SELECT 1 FROM posted_messages WHERE source_id = ?", (source_id,)).fetchone()
+    return row is not None
+
+def mark_posted(source_id):
+    db.execute("INSERT OR IGNORE INTO posted_messages (source_id) VALUES (?)", (source_id,))
+    db.commit()
+
+async def main():
+    print("🚀 Запуск с фиксированным ID канала...")
     
-    driver = webdriver.Chrome(options=options)
-    return driver
-
-def login_and_copy(driver):
-    logger.info("🚀 Запуск Selenium-бота...")
+    client = TelegramClient('session', API_ID, API_HASH, proxy=PROXY)
+    await client.start()
     
+    me = await client.get_me()
+    print(f"✅ Вход выполнен! Ты онлайн как {me.first_name}")
+    
+    # Используем числовой ID вместо имени
     try:
-        # 1. Открываем Web Telegram
-        driver.get("https://web.telegram.org/k/")
-        time.sleep(10)
-        
-        # 2. Вводим номер телефона
-        phone_input = driver.find_element(By.CSS_SELECTOR, 'input[type="tel"]')
-        phone_input.send_keys("+79030406091")
-        phone_input.send_keys(Keys.RETURN)
-        time.sleep(10)
-        
-        # 3. Ждём ввода кода (вручную)
-        logger.info("⚠️ В Telegram придёт код. Введи его в браузере вручную!")
-        input("Нажми Enter в Termux после того, как введёшь код в браузере...")
-        time.sleep(5)
-        
-        # 4. Открываем исходный канал
-        driver.get(f"https://web.telegram.org/k/#@{SOURCE_CHANNEL}")
-        time.sleep(10)
-        
-        # 5. Находим посты и копируем
-        logger.info(f"📥 Начинаю копирование из {SOURCE_CHANNEL} в {DEST_CHANNEL}...")
-        
-        # Прокручиваем вниз, чтобы загрузить посты
-        for _ in range(5):
-            driver.execute_script("window.scrollBy(0, 500)")
-            time.sleep(2)
-        
-        # Находим все сообщения
-        posts = driver.find_elements(By.CSS_SELECTOR, '.tgme_widget_message')
-        logger.info(f"📄 Найдено постов: {len(posts)}")
-        
-        for post in posts:
-            try:
-                # Кликаем на пост (открываем для копирования)
-                post.click()
-                time.sleep(2)
-                
-                # Находим кнопку "Переслать"
-                forward_btn = driver.find_element(By.CSS_SELECTOR, 'button[aria-label="Переслать"]')
-                forward_btn.click()
-                time.sleep(3)
-                
-                # Выбираем целевой чат
-                chat_input = driver.find_element(By.CSS_SELECTOR, 'input[placeholder="Поиск"]')
-                chat_input.send_keys(DEST_CHANNEL)
-                time.sleep(2)
-                
-                # Кликаем на найденный чат
-                chat_result = driver.find_element(By.CSS_SELECTOR, '.chatlist-item')
-                chat_result.click()
-                time.sleep(2)
-                
-                # Нажимаем "Переслать"
-                send_btn = driver.find_element(By.CSS_SELECTOR, 'button[aria-label="Переслать"]')
-                send_btn.click()
-                time.sleep(3)
-                
-                logger.info("✅ Пост переслан!")
-                
-            except Exception as e:
-                logger.error(f"❌ Ошибка копирования поста: {e}")
-                continue
-        
-        logger.info("🎉 Готово! Все посты скопированы.")
-        
+        source = await client.get_entity(SOURCE_CHANNEL_ID)
+        print(f"✅ Канал получен через ID: {SOURCE_CHANNEL_ID}")
     except Exception as e:
-        logger.error(f"❌ Критическая ошибка: {e}")
-
-@app.route("/")
-def index():
-    return "Bot is running!"
-
-@app.route("/health")
-def health():
-    driver = start_browser()
-    login_and_copy(driver)
-    driver.quit()
-    return jsonify({"status": "ok"})
+        print(f"❌ Ошибка получения канала по ID: {e}")
+        print("⚠️ Пробуем получить через имя как запасной вариант...")
+        source = await client.get_entity("@blvckrooom")
+    
+    dest = await client.get_entity(DEST_CHANNEL)
+    
+    print(f"📥 Слежу за каналом -> {DEST_CHANNEL}")
+    print("⏳ Жду новые посты...")
+    
+    last_id = 0
+    while True:
+        try:
+            messages = await client.get_messages(source, limit=5, min_id=last_id)
+            for msg in reversed(messages):
+                if msg.id <= last_id or is_posted(msg.id):
+                    continue
+                
+                # Определяем тему
+                text = msg.text or msg.caption or ""
+                topic_name = "General"
+                
+                hashtag = re.search(r'#(\w+)', text)
+                if hashtag:
+                    topic_name = hashtag.group(1)
+                elif "сумка" in text.lower():
+                    topic_name = "Сумки"
+                elif "обувь" in text.lower():
+                    topic_name = "Обувь"
+                elif "куртка" in text.lower():
+                    topic_name = "Куртки"
+                
+                # Создаём тему
+                topic_id = None
+                try:
+                    new_topic = await client(CreateForumTopicRequest(
+                        channel=dest,
+                        title=topic_name
+                    ))
+                    topic_id = new_topic.id
+                    print(f"✅ Тема '{topic_name}' создана!")
+                except Exception:
+                    print(f"⚠️ Тема '{topic_name}' уже есть. Отправляю в General.")
+                
+                try:
+                    # Пересылаем сообщение
+                    await client.forward_messages(
+                        DEST_CHANNEL,
+                        messages=msg.id,
+                        from_peer=source,
+                        message_thread_id=topic_id
+                    )
+                    
+                    mark_posted(msg.id)
+                    print(f"✅ Пост #{msg.id} скопирован в тему '{topic_name}'!")
+                    
+                except FloodWaitError as e:
+                    print(f"⏳ Ожидание {e.seconds}с...")
+                    await asyncio.sleep(e.seconds)
+                
+                await asyncio.sleep(2)
+            
+            if messages:
+                last_id = messages[0].id
+            
+            await asyncio.sleep(10)
+        
+        except Exception as e:
+            print(f"❌ Ошибка: {e}")
+            await asyncio.sleep(30)
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n🛑 Бот остановлен.")
