@@ -9,6 +9,7 @@ import requests
 from flask import Flask, jsonify
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
+from telethon.tl.functions.channels import JoinChannelRequest
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -103,7 +104,6 @@ async def get_topic_ids(client):
         return {}
 
 def load_session():
-    # 1. Сначала пробуем из переменной окружения
     session_b64 = os.environ.get("SESSION_B64")
     if session_b64:
         try:
@@ -116,7 +116,6 @@ def load_session():
         except Exception as e:
             logger.error(f"❌ Ошибка загрузки SESSION_B64: {e}")
     
-    # 2. Если нет — пробуем из файла session.b64
     if os.path.exists(SESSION_B64_FILE):
         try:
             with open(SESSION_B64_FILE, 'r') as f:
@@ -130,13 +129,30 @@ def load_session():
         except Exception as e:
             logger.error(f"❌ Ошибка загрузки session.b64: {e}")
     
-    # 3. Если есть файл session.session — используем его
     if os.path.exists(SESSION_FILE):
         logger.info("✅ Сессия загружена из session.session")
         return True
     
     logger.error("❌ Нет сессии (ни файла, ни SESSION_B64)")
     return False
+
+async def ensure_subscribed(client, channel_username):
+    """Подписывает аккаунт на канал, если ещё не подписан"""
+    try:
+        entity = await client.get_entity(channel_username)
+        # Пытаемся подписаться (если уже подписан — ошибка, но мы её игнорируем)
+        try:
+            await client(JoinChannelRequest(entity))
+            logger.info(f"✅ Подписались на канал {channel_username}")
+        except Exception as e:
+            if "CHANNEL_ALREADY" in str(e) or "already" in str(e).lower():
+                logger.info(f"✅ Уже подписаны на канал {channel_username}")
+            else:
+                logger.error(f"❌ Ошибка подписки: {e}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Не удалось получить канал {channel_username}: {e}")
+        return False
 
 async def process_albums(limit=100):
     if not load_session():
@@ -145,6 +161,12 @@ async def process_albums(limit=100):
     client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
     await client.connect()
     logger.info("✅ Подключено к аккаунту")
+
+    # Сначала подписываемся на канал
+    if not await ensure_subscribed(client, SOURCE_CHANNEL):
+        logger.error("❌ Не удалось подписаться на канал")
+        await client.disconnect()
+        return False
 
     try:
         channel = await client.get_entity(SOURCE_CHANNEL)
