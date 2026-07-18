@@ -1,30 +1,35 @@
+import os
 import asyncio
+import logging
 import re
 import time
+import requests
 import sqlite3
-from telethon import TelegramClient
-from telethon.errors import FloodWaitError
+from flask import Flask, jsonify
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # ================= НАСТРОЙКИ =================
-API_ID = 2040
-API_HASH = "b18441a1ff607e10a989891a5462e627"
-
-SOURCE_CHANNEL_ID = -1002028675800
+BOT_TOKEN = "8927033296:AAFbS1PZ5UjAoot5uaa5IfwWkCfYh2FYgA4"
+SOURCE_CHANNEL = "@blvckrooom"
 DEST_CHANNEL = "@trifferi02"
 OWNER_USERNAME = "nurikadambol"
-
-# ПРОКСИ УБРАН (используем прямое подключение)
-# Если Render блокирует, попробуем другой DC (Data Center)
-DC_ID = 2  # DC 2 часто работает лучше для РФ
+OLD_USERNAMES = ["blvckrooom", "thesameseven"]
 
 DB_PATH = "posted.db"
 # ==============================================
+
+app = Flask(__name__)
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS posted_messages (
-            source_id INTEGER PRIMARY KEY
+            source_id INTEGER PRIMARY KEY,
+            dest_id INTEGER,
+            source_chat_id INTEGER,
+            posted_at TEXT
         )
     """)
     conn.commit()
@@ -32,109 +37,135 @@ def init_db():
 
 db = init_db()
 
-def is_posted(source_id):
-    row = db.execute("SELECT 1 FROM posted_messages WHERE source_id = ?", (source_id,)).fetchone()
-    return row is not None
+def is_posted(source_msg_id, source_chat_id):
+    cursor = db.cursor()
+    cursor.execute(
+        "SELECT 1 FROM posted_messages WHERE source_id = ? AND source_chat_id = ?",
+        (source_msg_id, source_chat_id)
+    )
+    return cursor.fetchone() is not None
 
-def mark_posted(source_id):
-    db.execute("INSERT OR IGNORE INTO posted_messages (source_id) VALUES (?)", (source_id,))
+def save_posted(source_msg_id, dest_msg_id, source_chat_id):
+    cursor = db.cursor()
+    cursor.execute(
+        "INSERT OR IGNORE INTO posted_messages (source_id, dest_id, source_chat_id, posted_at) VALUES (?, ?, ?, ?)",
+        (source_msg_id, dest_msg_id, source_chat_id, time.strftime("%Y-%m-%d %H:%M:%S"))
+    )
     db.commit()
 
-async def main():
-    print("🚀 Запуск бота (прямое подключение через DC)...")
-    
-    # Создаём клиент с указанием конкретного DC
-    client = TelegramClient('session', API_ID, API_HASH)
-    # Принудительно указываем DC
-    client._dc_id = DC_ID
-    
+def tg_request(method, data):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
     try:
-        await client.start()
+        resp = requests.post(url, data=data, timeout=30)
+        return resp.json()
     except Exception as e:
-        print(f"❌ Ошибка подключения к DC {DC_ID}: {e}")
-        # Если не сработало, пробуем DC 4 (запасной)
-        print("🔄 Пробуем DC 4...")
-        client = TelegramClient('session', API_ID, API_HASH)
-        client._dc_id = 4
-        await client.start()
+        logger.error(f"❌ Ошибка API: {e}")
+        return None
+
+def process_text(text):
+    if not text:
+        return ""
+    for old in OLD_USERNAMES:
+        text = re.sub(rf'@{old}\b', f'@{OWNER_USERNAME}', text, flags=re.IGNORECASE)
+        text = re.sub(rf'https?://t\.me/{old}\b', '', text, flags=re.IGNORECASE)
+    text = re.sub(r' {2,}', ' ', text)
+    text = re.sub(r'\n{3,}', '\n\n', text).strip()
+    return text
+
+async def process_updates():
+    logger.info("🚀 Запуск бота через Bot API (стабильный)...")
     
-    me = await client.get_me()
-    print(f"✅ Вход выполнен! Ты онлайн как {me.first_name}")
+    source_info = tg_request("getChat", {"chat_id": SOURCE_CHANNEL})
+    if not source_info or not source_info.get("ok"):
+        logger.error("❌ Не удалось получить ID канала", SOURCE_CHANNEL)
+        return False
+    source_chat_id = source_info["result"]["id"]
     
-    try:
-        source = await client.get_entity(SOURCE_CHANNEL_ID)
-        print(f"✅ Канал получен через ID: {SOURCE_CHANNEL_ID}")
-    except Exception as e:
-        print(f"❌ Ошибка получения канала по ID: {e}")
-        return
+    last_update_id = 0
+    total_copied = 0
     
-    dest = await client.get_entity(DEST_CHANNEL)
-    
-    print(f"📥 Слежу за каналом -> {DEST_CHANNEL}")
-    print("⏳ Жду новые посты...")
-    
-    last_id = 0
     while True:
         try:
-            messages = await client.get_messages(source, limit=5, min_id=last_id)
-            for msg in reversed(messages):
-                if msg.id <= last_id or is_posted(msg.id):
+            updates = tg_request("getUpdates", {"offset": last_update_id + 1, "timeout": 30})
+            if not updates or not updates.get("ok"):
+                time.sleep(1)
+                continue
+            
+            for update in updates.get("result", []):
+                last_update_id = update["update_id"]
+                
+                if "channel_post" not in update:
                     continue
                 
-                text = msg.text or msg.caption or ""
-                topic_name = "General"
+                msg = update["channel_post"]
+                msg_chat_id = msg.get("chat", {}).get("id")
+                if msg_chat_id != source_chat_id:
+                    continue
                 
-                hashtag = re.search(r'#(\w+)', text)
-                if hashtag:
-                    topic_name = hashtag.group(1)
-                elif "сумка" in text.lower():
-                    topic_name = "Сумки"
-                elif "обувь" in text.lower():
-                    topic_name = "Обувь"
-                elif "куртка" in text.lower():
-                    topic_name = "Куртки"
+                msg_id = msg["message_id"]
+                if is_posted(msg_id, msg_chat_id):
+                    continue
                 
-                topic_id = None
-                try:
-                    topic_msg = await client.send_message(
-                        entity=dest,
-                        message=f"📌 **{topic_name}**",
-                        reply_to=0
-                    )
-                    topic_id = topic_msg.id
-                    print(f"✅ Тема '{topic_name}' создана!")
-                    await client.delete_messages(dest, [topic_id])
-                except Exception:
-                    print(f"⚠️ Тема '{topic_name}' уже есть. Отправляю в General.")
+                text = msg.get("text") or msg.get("caption") or ""
+                new_text = process_text(text)
                 
                 try:
-                    await client.forward_messages(
-                        DEST_CHANNEL,
-                        messages=msg.id,
-                        from_peer=source,
-                        message_thread_id=topic_id
-                    )
+                    resp = None
+                    if "photo" in msg:
+                        file_id = msg["photo"][-1]["file_id"]
+                        resp = tg_request("sendPhoto", {
+                            "chat_id": DEST_CHANNEL,
+                            "photo": file_id,
+                            "caption": new_text
+                        })
+                    elif "video" in msg:
+                        file_id = msg["video"]["file_id"]
+                        resp = tg_request("sendVideo", {
+                            "chat_id": DEST_CHANNEL,
+                            "video": file_id,
+                            "caption": new_text
+                        })
+                    elif "document" in msg:
+                        file_id = msg["document"]["file_id"]
+                        resp = tg_request("sendDocument", {
+                            "chat_id": DEST_CHANNEL,
+                            "document": file_id,
+                            "caption": new_text
+                        })
+                    elif new_text:
+                        resp = tg_request("sendMessage", {
+                            "chat_id": DEST_CHANNEL,
+                            "text": new_text
+                        })
                     
-                    mark_posted(msg.id)
-                    print(f"✅ Пост #{msg.id} скопирован в тему '{topic_name}'!")
+                    if resp and resp.get("ok"):
+                        dest_msg_id = resp["result"]["message_id"]
+                        save_posted(msg_id, dest_msg_id, msg_chat_id)
+                        total_copied += 1
+                        logger.info(f"✅ Пост #{msg_id} скопирован (Всего: {total_copied})")
+                    else:
+                        logger.error(f"❌ Ошибка отправки поста #{msg_id}: {resp}")
                     
-                except FloodWaitError as e:
-                    print(f"⏳ Ожидание {e.seconds}с...")
-                    await asyncio.sleep(e.seconds)
+                except Exception as e:
+                    logger.error(f"❌ Ошибка отправки: {e}")
                 
-                await asyncio.sleep(2)
+                time.sleep(1)
             
-            if messages:
-                last_id = messages[0].id
+            time.sleep(5)
             
-            await asyncio.sleep(10)
-        
         except Exception as e:
-            print(f"❌ Ошибка: {e}")
-            await asyncio.sleep(30)
+            logger.error(f"❌ Критическая ошибка: {e}")
+            time.sleep(30)
+
+@app.route("/")
+def index():
+    return "Bot is running!"
+
+@app.route("/health")
+def health():
+    asyncio.run(process_updates())
+    return jsonify({"status": "ok"})
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\n🛑 Бот остановлен.")
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
