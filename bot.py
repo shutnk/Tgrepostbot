@@ -3,20 +3,17 @@ import re
 import time
 import sqlite3
 from telethon import TelegramClient
-from telethon.tl.functions.channels import CreateForumTopicRequest
 from telethon.errors import FloodWaitError
 
 # ================= НАСТРОЙКИ =================
 API_ID = 2040
 API_HASH = "b18441a1ff607e10a989891a5462e627"
 
-# ВАЖНО: Используем ID, который ты получил (с -100 в начале)
 SOURCE_CHANNEL_ID = -1002028675800
-
 DEST_CHANNEL = "@trifferi02"
 OWNER_USERNAME = "nurikadambol"
 
-# Прокси (проверенный)
+# Прокси
 PROXY = ('http', '51.15.164.90', 3128)
 
 DB_PATH = "posted.db"
@@ -43,7 +40,7 @@ def mark_posted(source_id):
     db.commit()
 
 async def main():
-    print("🚀 Запуск с фиксированным ID канала...")
+    print("🚀 Запуск финальной версии бота...")
     
     client = TelegramClient('session', API_ID, API_HASH, proxy=PROXY)
     await client.start()
@@ -51,14 +48,12 @@ async def main():
     me = await client.get_me()
     print(f"✅ Вход выполнен! Ты онлайн как {me.first_name}")
     
-    # Используем числовой ID вместо имени
     try:
         source = await client.get_entity(SOURCE_CHANNEL_ID)
         print(f"✅ Канал получен через ID: {SOURCE_CHANNEL_ID}")
     except Exception as e:
         print(f"❌ Ошибка получения канала по ID: {e}")
-        print("⚠️ Пробуем получить через имя как запасной вариант...")
-        source = await client.get_entity("@blvckrooom")
+        return
     
     dest = await client.get_entity(DEST_CHANNEL)
     
@@ -87,15 +82,23 @@ async def main():
                 elif "куртка" in text.lower():
                     topic_name = "Куртки"
                 
-                # Создаём тему
+                # === ИЗМЕНЕНИЕ: Создаём тему через отправку сообщения ===
                 topic_id = None
                 try:
-                    new_topic = await client(CreateForumTopicRequest(
-                        channel=dest,
-                        title=topic_name
-                    ))
-                    topic_id = new_topic.id
-                    print(f"✅ Тема '{topic_name}' создана!")
+                    # Отправляем пустое сообщение с параметром reply_to=0.
+                    # Это заставит Telegram создать тему с таким названием, если её нет.
+                    topic_msg = await client.send_message(
+                        entity=dest,
+                        message=f"📌 **{topic_name}**",
+                        reply_to=0
+                    )
+                    topic_id = topic_msg.id
+                    print(f"✅ Тема '{topic_name}' создана (через сообщение)!")
+                    
+                    # Удаляем служебное сообщение, чтобы не засорять чат
+                    await client.delete_messages(dest, [topic_id])
+                    topic_id = topic_msg.id  # ID темы = ID сообщения, которое мы отправили
+                    
                 except Exception:
                     print(f"⚠️ Тема '{topic_name}' уже есть. Отправляю в General.")
                 
