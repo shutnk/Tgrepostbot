@@ -13,8 +13,9 @@ SOURCE_CHANNEL_ID = -1002028675800
 DEST_CHANNEL = "@trifferi02"
 OWNER_USERNAME = "nurikadambol"
 
-# ✅ НОВЫЙ РАБОЧИЙ ПРОКСИ (HTTP)
-PROXY = ('http', '194.67.204.46', 3128)
+# ПРОКСИ УБРАН (используем прямое подключение)
+# Если Render блокирует, попробуем другой DC (Data Center)
+DC_ID = 2  # DC 2 часто работает лучше для РФ
 
 DB_PATH = "posted.db"
 # ==============================================
@@ -40,10 +41,22 @@ def mark_posted(source_id):
     db.commit()
 
 async def main():
-    print("🚀 Запуск финальной версии бота...")
+    print("🚀 Запуск бота (прямое подключение через DC)...")
     
-    client = TelegramClient('session', API_ID, API_HASH, proxy=PROXY)
-    await client.start()
+    # Создаём клиент с указанием конкретного DC
+    client = TelegramClient('session', API_ID, API_HASH)
+    # Принудительно указываем DC
+    client._dc_id = DC_ID
+    
+    try:
+        await client.start()
+    except Exception as e:
+        print(f"❌ Ошибка подключения к DC {DC_ID}: {e}")
+        # Если не сработало, пробуем DC 4 (запасной)
+        print("🔄 Пробуем DC 4...")
+        client = TelegramClient('session', API_ID, API_HASH)
+        client._dc_id = 4
+        await client.start()
     
     me = await client.get_me()
     print(f"✅ Вход выполнен! Ты онлайн как {me.first_name}")
@@ -68,7 +81,6 @@ async def main():
                 if msg.id <= last_id or is_posted(msg.id):
                     continue
                 
-                # Определяем тему
                 text = msg.text or msg.caption or ""
                 topic_name = "General"
                 
@@ -82,7 +94,6 @@ async def main():
                 elif "куртка" in text.lower():
                     topic_name = "Куртки"
                 
-                # Создаём тему через отправку сообщения
                 topic_id = None
                 try:
                     topic_msg = await client.send_message(
