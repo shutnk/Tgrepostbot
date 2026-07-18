@@ -5,6 +5,7 @@ import re
 import time
 import requests
 import sqlite3
+import threading
 from flask import Flask, jsonify
 
 logging.basicConfig(level=logging.INFO)
@@ -35,10 +36,9 @@ def init_db():
     conn.commit()
     return conn
 
-db = init_db()
-
 def is_posted(source_msg_id, source_chat_id):
-    cursor = db.cursor()
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
     cursor.execute(
         "SELECT 1 FROM posted_messages WHERE source_id = ? AND source_chat_id = ?",
         (source_msg_id, source_chat_id)
@@ -46,12 +46,13 @@ def is_posted(source_msg_id, source_chat_id):
     return cursor.fetchone() is not None
 
 def save_posted(source_msg_id, dest_msg_id, source_chat_id):
-    cursor = db.cursor()
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
     cursor.execute(
         "INSERT OR IGNORE INTO posted_messages (source_id, dest_id, source_chat_id, posted_at) VALUES (?, ?, ?, ?)",
         (source_msg_id, dest_msg_id, source_chat_id, time.strftime("%Y-%m-%d %H:%M:%S"))
     )
-    db.commit()
+    conn.commit()
 
 def tg_request(method, data):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
@@ -163,9 +164,19 @@ def index():
 
 @app.route("/health")
 def health():
-    asyncio.run(process_updates())
     return jsonify({"status": "ok"})
 
+# Запускаем бота в фоновом потоке при старте
+def start_bot():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(process_updates())
+
 if __name__ == "__main__":
+    # Запускаем процесс копирования в отдельном потоке сразу при старте
+    thread = threading.Thread(target=start_bot)
+    thread.daemon = True
+    thread.start()
+    
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
